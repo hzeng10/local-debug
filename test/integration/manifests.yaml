@@ -1,0 +1,78 @@
+# Integration sample: an ambient namespace with a dependency (dep) and the service we
+# take over (orders). Mirrors the manual Phase-0 validation. whoami echoes which
+# instance served the request, so the harness can tell cluster-pod vs laptop apart.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dep
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dep }
+  template:
+    metadata:
+      labels: { app: dep }
+    spec:
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10.2
+          args: ["--name", "CLUSTER-DEP"]
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dep
+  namespace: demo
+spec:
+  selector: { app: dep }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: orders }
+  template:
+    metadata:
+      labels: { app: orders }
+    spec:
+      containers:
+        - name: orders
+          image: traefik/whoami:v1.10.2
+          args: ["--name", "CLUSTER-ORDERS", "--port", "8080"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DEP_URL
+              value: "http://dep.demo.svc.cluster.local"
+            - name: SPRING_PROFILES_ACTIVE
+              value: "cluster"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: demo
+spec:
+  selector: { app: orders }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

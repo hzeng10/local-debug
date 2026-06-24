@@ -1,0 +1,20 @@
+# ldbg-generated, machine-local artifacts (synced cluster env, run configs)
+.ldbg/
+*.env
+!example.env
+
+# Build output
+/dist/
+/ldbg
+/ldbg.exe
+
+# Transfer bundles for air-gapped install
+*.tar
+
+# Integration harness local artifacts
+test/integration/.bin/
+__pycache__/
+
+# Local working files (not part of the deliverable)
+claude-id.txt
+local-debug.txt

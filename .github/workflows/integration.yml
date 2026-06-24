@@ -1,0 +1,46 @@
+name: integration (kind + Istio ambient)
+
+# Heavy end-to-end test: stands up kind + Istio ambient + the sample app and drives the
+# real ldbg up -> test -> down flow. Runs on demand and on PRs that touch the tool.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "test/integration/**"
+      - ".github/workflows/integration.yml"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TELEPRESENCE_VERSION: "2.29.0"
+      ISTIO_VERSION: "1.30.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install kubectl
+        run: |
+          curl -fL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+
+      - name: Install kind
+        run: |
+          curl -fL "https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64" -o /tmp/kind
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+
+      - name: Install istioctl ${{ env.ISTIO_VERSION }}
+        run: |
+          curl -fL "https://istio.io/downloadIstio" | ISTIO_VERSION="${ISTIO_VERSION}" sh -
+          sudo install -m 0755 "istio-${ISTIO_VERSION}/bin/istioctl" /usr/local/bin/istioctl
+          istioctl version --remote=false
+
+      - name: Run integration harness
+        run: test/integration/harness.sh
