@@ -98,19 +98,138 @@ ldbg test orders -n demo --json    # 从集群内源头证明接管生效
 分工：开发者负责 IDE 断点；ClaudeCode 负责 `up`/`test`/`status`/`logs`、读堆栈、改代码并迭代
 —— 二者共享同一个 `ldbg` 会话。
 
-## 构建
+## 从源码构建
+
+`ldbg` 是纯 Go、零 CGO 的单文件二进制，可在 **Ubuntu** 与 **Windows 11** 上原生构建，也可在任一平台
+交叉编译出三大平台产物。下面分别给出两套完整步骤。
+
+### 0. 前置依赖（两个平台通用）
+
+| 工具 | 版本 | 说明 |
+| --- | --- | --- |
+| **Go** | **1.22+**（`go.mod` 锁定 `go 1.22.0`） | 唯一的硬性依赖 |
+| **Git** | 任意近期版本 | 拉取源码 |
+| **make** | 可选 | 仅 `Makefile` 用；Windows 下可直接用 `go build`，无需 make |
+
+构建只需联网拉取一次 Go module 依赖（`go.sum` 已锁定，`go build` 会自动下载到本地模块缓存）。
+之后即可离线构建。本仓库无 CGO 依赖，故无需 C 编译器。
 
 ```bash
-make build      # 本机二进制 ./ldbg
-make cross      # dist/ldbg-{linux,windows,darwin}-…（目标笔记本为 Windows 11 + Ubuntu）
-make test       # 单元测试
+git clone https://github.com/hzeng10/local-debug.git
+cd local-debug
 ```
 
-需要 Go 1.22+。锁定 Telepresence 2.29.0（用 `ldbg version` 查看）。
+---
 
-**集成测试** —— `test/integration/harness.sh` 会拉起 kind + Istio ambient + 示例应用，驱动真实的
+### 1. 在 Ubuntu（24.04 LTS / 24.x）上构建
+
+**安装 Go 1.22+。** Ubuntu 24.04 的 `apt` 自带 Go 1.22，可直接用；若需更新版本或其它 Ubuntu，
+建议装官方 tarball。
+
+```bash
+# 方式 A：发行版自带（Ubuntu 24.04 即 Go 1.22，满足要求）
+sudo apt update && sudo apt install -y golang-go git make
+
+# 方式 B：官方 tarball（任意 Ubuntu，版本最新最可控）
+curl -fsSL https://go.dev/dl/go1.22.2.linux-amd64.tar.gz -o /tmp/go.tgz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile && source ~/.profile
+
+go version   # 应 ≥ go1.22
+```
+
+**构建（用 Makefile，最简单）：**
+
+```bash
+make build      # → 本机二进制 ./ldbg
+make test       # 运行单元测试
+make vet        # go vet 静态检查
+make cross      # 交叉编译三平台 → dist/ldbg-{linux-amd64,windows-amd64.exe,darwin-arm64}
+make clean      # 删除 ./ldbg 和 dist/
+```
+
+**或不依赖 make，直接用 go：**
+
+```bash
+go build -ldflags "-s -w -X github.com/hzeng10/local-debug/cmd.Version=$(git describe --tags --always --dirty)" -o ldbg .
+./ldbg version
+```
+
+---
+
+### 2. 在 Windows 11 上构建
+
+Windows 默认没有 `make`，因此直接用 `go build`（下面给出 **PowerShell** 命令）。
+
+**安装 Go 1.22+。** 任选其一：
+
+```powershell
+# 方式 A：winget（Windows 11 自带）
+winget install --id GoLang.Go -e
+winget install --id Git.Git -e
+
+# 方式 B：到 https://go.dev/dl/ 下载 go1.22.x.windows-amd64.msi 双击安装
+```
+
+安装后**新开一个** PowerShell 窗口（让 PATH 生效），确认：
+
+```powershell
+go version    # 应 ≥ go1.22
+git --version
+```
+
+**构建本机二进制（生成 `ldbg.exe`）：**
+
+```powershell
+git clone https://github.com/hzeng10/local-debug.git
+cd local-debug
+
+# 取版本号（可选；拿不到就用 0.0.0-dev）
+$ver = (git describe --tags --always --dirty 2>$null); if (-not $ver) { $ver = "0.0.0-dev" }
+
+go build -ldflags "-s -w -X github.com/hzeng10/local-debug/cmd.Version=$ver" -o ldbg.exe .
+.\ldbg.exe version
+```
+
+**在 Windows 上交叉编译出三平台产物**（PowerShell 通过 `$env:` 设置 `GOOS/GOARCH`）：
+
+```powershell
+$ldflags = "-s -w -X github.com/hzeng10/local-debug/cmd.Version=$ver"
+
+$env:GOOS="windows"; $env:GOARCH="amd64"; go build -ldflags $ldflags -o dist\ldbg-windows-amd64.exe .
+$env:GOOS="linux";   $env:GOARCH="amd64"; go build -ldflags $ldflags -o dist\ldbg-linux-amd64 .
+$env:GOOS="darwin";  $env:GOARCH="arm64"; go build -ldflags $ldflags -o dist\ldbg-darwin-arm64 .
+Remove-Item Env:GOOS, Env:GOARCH      # 复原，避免影响后续命令
+```
+
+> 若用 `cmd.exe` 而非 PowerShell：用 `set GOOS=windows`、`set GOARCH=amd64`（每行一条），再 `go build ...`。
+> 若装了 GNU Make（`winget install GnuWin32.Make` 或 Git Bash 里的 make），也可直接 `make build` / `make cross`。
+
+---
+
+### 3. 构建产物与验证
+
+| 平台 | `make cross` / 交叉编译产物 | 运行环境 |
+| --- | --- | --- |
+| Linux | `dist/ldbg-linux-amd64` | Ubuntu 笔记本 |
+| Windows 11 | `dist/ldbg-windows-amd64.exe` | Windows 笔记本 |
+| macOS | `dist/ldbg-darwin-arm64` | Apple Silicon Mac |
+
+版本号通过 ldflags 注入到 `cmd.Version`，构建后用 `ldbg version` 核对（同时显示锁定的
+Telepresence 版本 **2.29.0**）。把二进制放到 `PATH` 下（Linux 可 `sudo install -m755 ldbg /usr/local/bin/`；
+Windows 把 `ldbg.exe` 拷到某个已在 `PATH` 的目录）即可全局使用。
+
+> **运行时依赖**：构建产物本身自包含；但**运行** `ldbg` 需要笔记本上已装 `telepresence`（2.29.0）
+> 和能访问目标集群的 `kubectl`/kubeconfig。详见 [`docs/SETUP.zh-CN.md`](docs/SETUP.zh-CN.md)。
+
+---
+
+### 4. 集成测试（可选）
+
+`test/integration/harness.sh` 会拉起 kind + Istio ambient + 示例应用，驱动真实的
 `up`→`test`→`down` 流程，并断言 ambient 豁免、入站接管、出站、离线安装与干净收尾。它在 CI 中运行
-（`.github/workflows/integration.yml`）；详见 [`test/integration/README.md`](test/integration/README.md)。
+（`.github/workflows/integration.yml`）；本地运行需要 `docker`、`kind`、`istioctl`、`kubectl`。
+详见 [`test/integration/README.md`](test/integration/README.md)。
 
 ## 注意事项 / 范围
 
