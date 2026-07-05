@@ -23,6 +23,11 @@ var logsCmd = &cobra.Command{
 workload's pods (including the injected traffic-agent container, whose logs show whether
 traffic is being routed to your laptop). Use --manager for the traffic-manager.
 
+For searching the centralized log store (history, deleted pods, keyword and time-window
+filters) use the subcommands: query, tail, stats, fields, values. Note their names are
+reserved words in the [service] slot — a service literally named "query" etc. must be
+addressed as 'ldbg logs query --service query'.
+
 Your local app's own logs appear in your IDE/terminal (ldbg does not own that process
 unless you launched it with 'ldbg up --run').`,
 	Args: cobra.MaximumNArgs(1),

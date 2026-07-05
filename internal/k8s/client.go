@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -17,6 +18,7 @@ import (
 type Client struct {
 	cs        kubernetes.Interface
 	namespace string
+	restCfg   *rest.Config // nil for fake clients; required only by PortForwardService
 }
 
 // NewClient builds a Client from a kubeconfig path (empty = default discovery) and
@@ -43,7 +45,7 @@ func NewClient(kubeconfigPath, contextName string) (*Client, error) {
 	if err != nil {
 		ns = "default"
 	}
-	return &Client{cs: cs, namespace: ns}, nil
+	return &Client{cs: cs, namespace: ns, restCfg: restCfg}, nil
 }
 
 // NewClientFromInterface wraps a pre-built clientset (used by tests with a fake).

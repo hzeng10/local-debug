@@ -57,6 +57,22 @@ func (p *Printer) Result(command, humanText string, data interface{}) {
 	}
 }
 
+// ResultHint is Result plus an advisory hint: JSON mode emits the hint inside the
+// envelope; human mode prints humanText to Out and the hint to Err (mirroring Failf's
+// placement so hints never pollute pipeable stdout).
+func (p *Printer) ResultHint(command, humanText string, data interface{}, hint string) {
+	if p.Format == JSON {
+		p.writeJSON(Envelope{OK: true, Command: command, Data: data, Hint: hint})
+		return
+	}
+	if humanText != "" {
+		fmt.Fprintln(p.Out, humanText)
+	}
+	if hint != "" {
+		fmt.Fprintf(p.Err, "hint: %s\n", hint)
+	}
+}
+
 // Failf prints an error consistently and returns it so callers can also use it
 // as the command's returned error (which drives a non-zero exit code).
 func (p *Printer) Failf(command, hint string, err error) error {
