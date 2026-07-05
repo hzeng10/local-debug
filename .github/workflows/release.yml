@@ -1,0 +1,60 @@
+name: release
+
+# On a version tag push (vX.Y.Z), cross-compile the ldbg CLI and attach the
+# binaries to the matching GitHub Release. If the release does not exist yet
+# (e.g. the tag was pushed with `git push origin vX.Y.Z`), it is created with
+# auto-generated notes; if it already exists (e.g. created in the web UI), its
+# notes are kept and the binaries are uploaded onto it.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:   # can also be run against an existing tag from the Actions UI
+
+permissions:
+  contents: write      # required to create the release and upload assets
+
+jobs:
+  release:
+    name: build & attach binaries
+    # Only meaningful for tag refs; a manual dispatch against a branch is a no-op.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go vet ./... && go test ./...
+
+      # ldbg is pure Go with CGO disabled, so this one Linux runner
+      # cross-compiles every target. The tag becomes `ldbg version`.
+      - name: Cross-compile all platforms
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
+            echo "building ldbg $VERSION for $target"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X github.com/hzeng10/local-debug/cmd.Version=${VERSION}" \
+              -o "dist/ldbg-$os-$arch$ext" .
+          done
+          ls -l dist/
+
+      - name: Attach binaries to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Create the release only if one doesn't already exist for this tag.
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "ldbg $TAG" --generate-notes
+          # --clobber makes re-runs idempotent (overwrites same-named assets).
+          gh release upload "$TAG" dist/* --clobber
