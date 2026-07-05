@@ -21,6 +21,10 @@ type EnvVar struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+// SourceSynthetic marks env vars fabricated by ldbg itself (never read from the
+// cluster), e.g. the LOGGING_FILE_NAME injection for local log capture.
+const SourceSynthetic = "ldbg (synthetic)"
+
 // ResolveEnv expands a container's env + envFrom into concrete variables, reading the
 // referenced ConfigMaps/Secrets. Kubernetes precedence is honored: envFrom first,
 // then env (a later same-named entry overrides an earlier one). fieldRef and

@@ -52,6 +52,43 @@ func TestWriteEnvFile(t *testing.T) {
 	}
 }
 
+func TestWriteEnvFileSyntheticComment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "orders.env")
+	vars := []k8s.EnvVar{
+		{Name: "A", Value: "1", Source: "literal"},
+		{Name: "LOGGING_FILE_NAME", Value: "/abs/.ldbg/logs/orders.log", Source: k8s.SourceSynthetic},
+	}
+	if _, _, err := WriteEnvFile(path, vars); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(string(b), "\n")
+	varIdx := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "LOGGING_FILE_NAME=") {
+			varIdx = i
+		}
+	}
+	if varIdx < 1 || !strings.Contains(lines[varIdx-1], "synthetic") {
+		t.Errorf("synthetic comment must precede the var:\n%s", b)
+	}
+
+	// Round-trip: LoadEnvFile still returns the synthetic var, comments ignored.
+	env, err := LoadEnvFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, kv := range env {
+		if kv == "LOGGING_FILE_NAME=/abs/.ldbg/logs/orders.log" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("round-trip lost the synthetic var: %v", env)
+	}
+}
+
 func TestSummarizeMasksSecrets(t *testing.T) {
 	mask := func(string) string { return "MASKED" }
 	vars := []k8s.EnvVar{{Name: "DB_PASSWORD", Value: "p@ssword", Secret: true, Source: "secret:db/PASSWORD"}}

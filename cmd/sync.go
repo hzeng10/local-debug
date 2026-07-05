@@ -6,26 +6,29 @@ import (
 	"path/filepath"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
+	"github.com/hzeng10/local-debug/internal/locallog"
 	"github.com/hzeng10/local-debug/internal/output"
 	"github.com/hzeng10/local-debug/internal/springconfig"
 	"github.com/spf13/cobra"
 )
 
 var (
-	syncEnvOut string
-	syncRunCfg string
+	syncEnvOut     string
+	syncRunCfg     string
+	syncNoLocalLog bool
 )
 
 // syncResult is the --json payload for `ldbg sync`.
 type syncResult struct {
-	Target    string       `json:"target"`
-	Namespace string       `json:"namespace"`
-	Kind      string       `json:"kind"`
-	Container string       `json:"container"`
-	EnvFile   string       `json:"envFile"`
-	Written   int          `json:"written"`
-	Skipped   int          `json:"skipped"`
-	Vars      []k8s.EnvVar `json:"vars"`
+	Target       string       `json:"target"`
+	Namespace    string       `json:"namespace"`
+	Kind         string       `json:"kind"`
+	Container    string       `json:"container"`
+	EnvFile      string       `json:"envFile"`
+	Written      int          `json:"written"`
+	Skipped      int          `json:"skipped"`
+	LocalLogFile string       `json:"localLogFile,omitempty"`
+	Vars         []k8s.EnvVar `json:"vars"`
 }
 
 var syncCmd = &cobra.Command{
@@ -47,7 +50,7 @@ Secret values are masked in stdout/logs but written in full to the (0600, git-ig
 		if err != nil {
 			return out.Failf("sync", "", err)
 		}
-		res, _, err := syncEnvToFile(ctx, cl, ns, args[0], syncEnvOut)
+		res, _, err := syncEnvToFile(ctx, cl, ns, args[0], syncEnvOut, !syncNoLocalLog)
 		if err != nil {
 			return out.Failf("sync", "is the service/workload name and namespace correct? RBAC: get on configmaps/secrets", err)
 		}
@@ -65,7 +68,9 @@ Secret values are masked in stdout/logs but written in full to the (0600, git-ig
 // syncEnvToFile resolves the target workload's cluster env and writes it to an
 // env-file (default .ldbg/<target>.env). Shared by `sync` and `up`. It also returns
 // the resolved Workload so callers can default the intercept port from its Service.
-func syncEnvToFile(ctx context.Context, cl *k8s.Client, ns, target, envOut string) (syncResult, *k8s.Workload, error) {
+// localLog=true additionally injects the synthetic LOGGING_FILE_NAME variable so
+// the app writes .ldbg/logs/<target>.log for `ldbg logs local` (D6).
+func syncEnvToFile(ctx context.Context, cl *k8s.Client, ns, target, envOut string, localLog bool) (syncResult, *k8s.Workload, error) {
 	wl, err := cl.ResolveWorkload(ctx, ns, target)
 	if err != nil {
 		return syncResult{}, nil, err
@@ -78,6 +83,13 @@ func syncEnvToFile(ctx context.Context, cl *k8s.Client, ns, target, envOut strin
 	if err != nil {
 		return syncResult{}, nil, err
 	}
+	var logPath string
+	if localLog {
+		vars, logPath, err = locallog.InjectEnvVar(vars, target)
+		if err != nil {
+			return syncResult{}, nil, err
+		}
+	}
 	envPath := envOut
 	if envPath == "" {
 		envPath = filepath.Join(".ldbg", target+".env")
@@ -88,7 +100,7 @@ func syncEnvToFile(ctx context.Context, cl *k8s.Client, ns, target, envOut strin
 	}
 	res := syncResult{
 		Target: target, Namespace: ns, Kind: wl.Kind, Container: ctr.Name,
-		EnvFile: envPath, Written: written, Skipped: skipped, Vars: vars,
+		EnvFile: envPath, Written: written, Skipped: skipped, LocalLogFile: logPath, Vars: vars,
 	}
 	return res, wl, nil
 }
@@ -105,5 +117,6 @@ func init() {
 	f := syncCmd.Flags()
 	f.StringVar(&syncEnvOut, "env-out", "", "path to write the env-file (default: .ldbg/<service>.env)")
 	f.StringVar(&syncRunCfg, "run-config", "", "generate IDE run config: 'intellij' or 'vscode'")
+	f.BoolVar(&syncNoLocalLog, "no-local-log", false, "do not inject the synthetic LOGGING_FILE_NAME var (local log capture for 'ldbg logs local')")
 	rootCmd.AddCommand(syncCmd)
 }

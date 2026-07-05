@@ -92,13 +92,19 @@ func (v *vlFlags) fieldList() []string {
 // positionalService merges the optional positional [service] with --service:
 // the positional wins when only one is given; both set and different is an error.
 func (v *vlFlags) positionalService(args []string) error {
+	return mergeServiceArg(args, &v.service)
+}
+
+// mergeServiceArg is the shared positional-vs---service merge used by the logs
+// query family and logs local.
+func mergeServiceArg(args []string, service *string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	if v.service != "" && v.service != args[0] {
-		return fmt.Errorf("conflicting service names: positional %q vs --service %q", args[0], v.service)
+	if *service != "" && *service != args[0] {
+		return fmt.Errorf("conflicting service names: positional %q vs --service %q", args[0], *service)
 	}
-	v.service = args[0]
+	*service = args[0]
 	return nil
 }
 
@@ -144,7 +150,7 @@ func queryHint(truncated bool, service string, st *tp.Status) string {
 	if service != "" && st != nil {
 		for _, i := range st.Intercepts {
 			if i.Name == service {
-				hints = append(hints, fmt.Sprintf("service %q is currently intercepted: its newest logs are on this laptop, not in the cluster store ('ldbg logs local' arrives in phase 2)", service))
+				hints = append(hints, fmt.Sprintf("service %q is currently intercepted: its newest logs are on this laptop, not in the cluster store — query them with 'ldbg logs local %s'", service, service))
 				break
 			}
 		}

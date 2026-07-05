@@ -57,7 +57,7 @@ func WriteIntelliJRunConfig(workspaceDir, service, envFile, buildTool string) (s
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
-	path := filepath.Join(dir, sanitize(service)+"-ldbg.run.xml")
+	path := filepath.Join(dir, Sanitize(service)+"-ldbg.run.xml")
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		return "", "", err
 	}
@@ -90,7 +90,7 @@ func WriteVSCodeLaunch(workspaceDir, service, envFile string) (string, bool, err
 
 	launch := filepath.Join(workspaceDir, ".vscode", "launch.json")
 	if exists(launch) {
-		snippet := filepath.Join(workspaceDir, ".ldbg", "vscode-"+sanitize(service)+".launch.json")
+		snippet := filepath.Join(workspaceDir, ".ldbg", "vscode-"+Sanitize(service)+".launch.json")
 		if err := os.MkdirAll(filepath.Dir(snippet), 0o755); err != nil {
 			return "", true, err
 		}
@@ -117,7 +117,8 @@ func WriteVSCodeLaunch(workspaceDir, service, envFile string) (string, bool, err
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
-func sanitize(s string) string {
+// Sanitize makes a service name safe for use in file names (Windows forbids ':' etc).
+func Sanitize(s string) string {
 	return strings.NewReplacer("/", "-", " ", "_", ":", "-").Replace(s)
 }
 

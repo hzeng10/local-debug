@@ -61,7 +61,7 @@ var downCmd = &cobra.Command{
 		}
 
 		if !downKeep {
-			res.RemovedFiles = cleanupGeneratedDir()
+			res.RemovedFiles = cleanupGeneratedDir(".ldbg")
 		}
 
 		out.Result("down", renderDown(res), res)
@@ -127,21 +127,40 @@ func stillOptedOut(ctx context.Context, name, namespace string) bool {
 	return err == nil && wl.LdbgAppliedOptOut()
 }
 
-// cleanupGeneratedDir removes the git-ignored .ldbg/ working dir.
-func cleanupGeneratedDir() []string {
-	const dir = ".ldbg"
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+// cleanupGeneratedDir recursively removes the git-ignored working dir (.ldbg/,
+// which now nests logs/), returning every file it actually removed. Directories
+// are removed but not listed (matches the previous JSON shape). Parameterized
+// for testability.
+func cleanupGeneratedDir(dir string) []string {
+	if _, err := os.Stat(dir); err != nil {
 		return nil
 	}
 	var removed []string
-	for _, e := range entries {
-		p := filepath.Join(dir, e.Name())
-		if os.Remove(p) == nil {
-			removed = append(removed, p)
+	var rm func(p string) bool // post-order: children first; reports "p fully gone"
+	rm = func(p string) bool {
+		entries, err := os.ReadDir(p)
+		if err != nil {
+			return false
 		}
+		ok := true
+		for _, e := range entries {
+			child := filepath.Join(p, e.Name())
+			if e.IsDir() {
+				if !rm(child) {
+					ok = false
+				}
+			} else if os.Remove(child) == nil {
+				removed = append(removed, child)
+			} else {
+				ok = false
+			}
+		}
+		if ok {
+			ok = os.Remove(p) == nil
+		}
+		return ok
 	}
-	_ = os.Remove(dir)
+	rm(dir)
 	return removed
 }
 

@@ -3,12 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"time"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
+	"github.com/hzeng10/local-debug/internal/locallog"
 	"github.com/hzeng10/local-debug/internal/mesh"
 	"github.com/hzeng10/local-debug/internal/springconfig"
 	"github.com/hzeng10/local-debug/internal/tp"
@@ -22,6 +24,7 @@ var (
 	upNoMount     bool
 	upKeepAmbient bool
 	upRunConfig   string
+	upNoLocalLog  bool
 )
 
 // upResult is the --json payload for `ldbg up`.
@@ -30,6 +33,7 @@ type upResult struct {
 	Namespace            string                  `json:"namespace"`
 	EnvFile              string                  `json:"envFile"`
 	VarsWritten          int                     `json:"varsWritten"`
+	LocalLogFile         string                  `json:"localLogFile,omitempty"`
 	Port                 string                  `json:"port"`
 	LocalPort            int                     `json:"localPort"`
 	Connected            bool                    `json:"connected"`
@@ -63,7 +67,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 		}
 
 		// 1) Config sync.
-		sync, wl, err := syncEnvToFile(ctx, cl, ns, target, upEnvOut)
+		sync, wl, err := syncEnvToFile(ctx, cl, ns, target, upEnvOut, !upNoLocalLog)
 		if err != nil {
 			return out.Failf("up", "is the service/workload name and namespace correct?", err)
 		}
@@ -101,7 +105,8 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 
 		res := upResult{
 			Target: target, Namespace: ns, EnvFile: sync.EnvFile, VarsWritten: sync.Written,
-			Port: port, LocalPort: localPortOf(port), Connected: connected, InterceptActive: true,
+			LocalLogFile: sync.LocalLogFile,
+			Port:         port, LocalPort: localPortOf(port), Connected: connected, InterceptActive: true,
 		}
 
 		// 4) Ambient handling. An intercepted ambient workload gets its port black-holed
@@ -145,7 +150,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 		if len(upRun) > 0 {
 			res.Launched = true
 			out.Result("up", upHumanLaunching(res), res)
-			return launchApp(ctx, sync.EnvFile, upRun)
+			return launchApp(ctx, sync.EnvFile, sync.LocalLogFile, upRun)
 		}
 
 		out.Result("up", upHumanNextSteps(res), res)
@@ -177,34 +182,59 @@ func localPortOf(port string) int {
 }
 
 // launchApp runs the user command with the synced cluster env merged into the
-// environment, inheriting stdio so IDE-less runs (bootRun/java -jar) work.
-func launchApp(ctx context.Context, envFile string, argv []string) error {
+// environment. When logPath is set, stdout/stderr are tee'd there for `ldbg logs
+// local`, and the synthetic LOGGING_FILE_NAME is stripped from the child env so
+// the tee is the single writer (a cluster-defined var with a different value is
+// left alone). Tee failure degrades to plain passthrough — never blocks launch.
+func launchApp(ctx context.Context, envFile, logPath string, argv []string) error {
 	extra, err := springconfig.LoadEnvFile(envFile)
 	if err != nil {
 		return out.Failf("up", "", err)
 	}
+	env := append(os.Environ(), extra...)
+	stdout, stderr := io.Writer(os.Stdout), io.Writer(os.Stderr)
+	if logPath != "" {
+		env = locallog.StripVar(env, locallog.EnvVar, logPath)
+		if f, ferr := locallog.OpenAppend(logPath); ferr != nil {
+			out.Info("! local log capture disabled: %v", ferr)
+		} else {
+			defer f.Close()
+			stdout = io.MultiWriter(os.Stdout, f)
+			stderr = io.MultiWriter(os.Stderr, f)
+		}
+	}
 	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	c.Env = append(os.Environ(), extra...)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	c.Env = env
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, stdout, stderr
 	return c.Run()
 }
 
 func upHumanNextSteps(r upResult) string {
-	return fmt.Sprintf(`Ready. Start your Spring Boot app on local port %d, then send traffic through the cluster.
+	s := fmt.Sprintf(`Ready. Start your Spring Boot app on local port %d, then send traffic through the cluster.
 
   env-file : %s   (Telepresence/IDE EnvFile format)
-  port     : %s   (local:remote)
+  port     : %s   (local:remote)`,
+		r.LocalPort, r.EnvFile, r.Port)
+	if r.LocalLogFile != "" {
+		s += fmt.Sprintf("\n  local log: %s   (query with 'ldbg logs local %s')", r.LocalLogFile, r.Target)
+	}
+	s += fmt.Sprintf(`
 
 Next:
   • IntelliJ/VS Code: set the run config EnvFile to %s, run/debug on port %d
   • or:  set -a; . %s; set +a; ./gradlew bootRun
   • verify:  ldbg test
   • stop:    ldbg down`,
-		r.LocalPort, r.EnvFile, r.Port, r.EnvFile, r.LocalPort, r.EnvFile)
+		r.EnvFile, r.LocalPort, r.EnvFile)
+	return s
 }
 
 func upHumanLaunching(r upResult) string {
-	return fmt.Sprintf("Launching local app on port %d with synced env (%s)…", r.LocalPort, r.EnvFile)
+	s := fmt.Sprintf("Launching local app on port %d with synced env (%s)…", r.LocalPort, r.EnvFile)
+	if r.LocalLogFile != "" {
+		s += fmt.Sprintf(" (output tee'd to %s)", r.LocalLogFile)
+	}
+	return s
 }
 
 func init() {
@@ -215,5 +245,6 @@ func init() {
 	f.BoolVar(&upNoMount, "no-mount", false, "do not mount the pod's secret/configmap volumes locally")
 	f.BoolVar(&upKeepAmbient, "keep-ambient", false, "do not exclude the workload from Istio ambient (intercept may be black-holed)")
 	f.StringVar(&upRunConfig, "run-config", "", "also generate an IDE run config: 'intellij' or 'vscode'")
+	f.BoolVar(&upNoLocalLog, "no-local-log", false, "do not inject the synthetic LOGGING_FILE_NAME var (local log capture for 'ldbg logs local')")
 	rootCmd.AddCommand(upCmd)
 }

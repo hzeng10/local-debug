@@ -32,6 +32,9 @@ func WriteEnvFile(path string, vars []k8s.EnvVar) (written, skipped int, err err
 			fmt.Fprintf(&b, "# %s skipped: %s\n", v.Name, v.Reason)
 			continue
 		}
+		if v.Source == k8s.SourceSynthetic {
+			fmt.Fprintf(&b, "# %s is synthetic — injected by ldbg (not from the cluster); Spring Boot relaxed binding maps it to logging.file.name. Opt out with --no-local-log.\n", v.Name)
+		}
 		fmt.Fprintf(&b, "%s=%s\n", v.Name, escapeValue(v.Value))
 		written++
 	}
