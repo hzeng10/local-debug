@@ -208,13 +208,15 @@ func probeHealth(addr string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// resolveVLogs wires the production resolver: telepresence tunnel state, the
-// real health probe, and a client-go port-forward to svc/victorialogs.
-func resolveVLogs(ctx context.Context, v *vlFlags, st *tp.Status) (addr string, cleanup func(), source string, err error) {
+// resolveVLogsAddr wires the production resolver (telepresence tunnel state,
+// real health probe, client-go port-forward to svc/victorialogs) with no output
+// side effects — shared by the logs commands and `doctor`. cleanup is always
+// non-nil on success.
+func resolveVLogsAddr(ctx context.Context, flagAddr, vlogsNS string, st *tp.Status) (addr string, cleanup func(), source string, err error) {
 	r := vlResolver{
-		flagAddr:  v.vlogsAddr,
+		flagAddr:  flagAddr,
 		envAddr:   os.Getenv("VLOGS_ADDR"),
-		namespace: v.vlogsNamespace,
+		namespace: vlogsNS,
 		connected: st != nil && st.Connected,
 		probe:     probeHealth,
 		portFwd: func(ctx context.Context) (string, func(), error) {
@@ -222,7 +224,7 @@ func resolveVLogs(ctx context.Context, v *vlFlags, st *tp.Status) (addr string, 
 			if err != nil {
 				return "", nil, err
 			}
-			pf, err := cl.PortForwardService(ctx, v.vlogsNamespace, vlogsService, vlogsPort)
+			pf, err := cl.PortForwardService(ctx, vlogsNS, vlogsService, vlogsPort)
 			if err != nil {
 				return "", nil, err
 			}
@@ -235,6 +237,16 @@ func resolveVLogs(ctx context.Context, v *vlFlags, st *tp.Status) (addr string, 
 	}
 	if cleanup == nil {
 		cleanup = func() {}
+	}
+	return addr, cleanup, source, nil
+}
+
+// resolveVLogs is resolveVLogsAddr for the logs commands: flag-driven and with
+// the human-mode source line on stderr.
+func resolveVLogs(ctx context.Context, v *vlFlags, st *tp.Status) (addr string, cleanup func(), source string, err error) {
+	addr, cleanup, source, err = resolveVLogsAddr(ctx, v.vlogsAddr, v.vlogsNamespace, st)
+	if err != nil {
+		return "", nil, "", err
 	}
 	// To stderr, not out.Info: -o jsonl/raw stdout must stay cleanly pipeable.
 	if out.Format == output.Human {

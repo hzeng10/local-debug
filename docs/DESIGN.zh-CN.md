@@ -268,7 +268,7 @@ log-analysis/cli/internal/output/  →  local-debug/internal/logquery/format/   
 日志能被查到的前提是 Vector 采集到位。针对约 100 个服务的共享调试集群：
 
 - **现状核查（重要更正）**：白名单选择器是**硬编码**在 `deploy/k8s/vector-k8s.toml` 里的（`extra_label_selector = "logging.example.com/collect=true"`）；配置注释提到的 `COLLECT_LABEL` 环境变量**并未接线**，DaemonSet 也没有设它 —— 即今天**不存在**任何「全量采集」开关，opt-in 还是 log-analysis 有意的设计取舍（其 design.md 自述「高效、默认关闭」）。
-- **决策（D5）：在 log-analysis 新增全量采集开关**，作为其一个明确工作项（W5）：推荐实现为 kustomize overlay `deploy/k8s/overlays/collect-all/`（patch 掉 `extra_label_selector`），或将选择器接上真实的环境变量插值。调试集群以全量模式部署 —— 调试场景无法预知会查哪个服务，白名单模式的「忘打标 → 查无日志」是最伤体验的坑。全量后须按实测日志速率重估 PVC（默认 20Gi 起步，30d 保留期，见 R4）。
+- **决策（D5）：在 log-analysis 新增全量采集开关**，作为其一个明确工作项（W5）：已实现为 kustomize overlay `deploy/overlays/collect-all/`（选择器接上真实的环境变量插值 `${COLLECT_LABEL-...}` + `COLLECT_EXCLUDE_NS`；overlay 只 patch DaemonSet 环境变量。注：overlay 不能嵌在 base 目录内，否则 kustomize 报循环，故放在 `deploy/overlays/` 下）。调试集群以全量模式部署 —— 调试场景无法预知会查哪个服务，白名单模式的「忘打标 → 查无日志」是最伤体验的坑。全量后须按实测日志速率重估 PVC（默认 20Gi 起步，30d 保留期，见 R4）。
 - **collect-all 必须排除基础设施 namespace**（V2 实测确认，§13）：无选择器时 Vector 会扫遍所有 namespace，`kube-system`/`istio-system` 组件的日志量轻松淹没业务日志（istio-cni 半小时上千条），且采集 `logging` namespace 自身会形成 Vector 自采集回环。overlay 应通过 namespace 排除（VRL filter 按 `namespace` 丢弃，或 `extra_namespace_label_selector`）默认排除 `kube-system`、`kube-node-lease`、`istio-system`、`logging`；网格排障需要 ztunnel/waypoint 日志时走既有的 `COLLECT_MESH_INFRA` 专用通道而非全量兜底。
 - 若个别环境仍用白名单：部署清单中为业务服务**预置** `logging.example.com/collect=true`（打在 Deployment 的 pod template 上；注意 kubelet 端过滤，改标签会触发滚动重启，所以要在部署期做而非调试期做，且新打标服务没有历史日志）。
 - `ldbg doctor <svc>` 新增检查项：目标服务近 N 分钟在 VictoriaLogs 中是否有日志流入；无则提示采集未覆盖及修复方法（该检查以 `warn` 而非 `fail` 呈现，避免日志栈缺席时 doctor 整体判负）。
@@ -354,6 +354,11 @@ flowchart LR
 | `--since` 取值 | `5m` | `30m` | `1h` | `4h` | `8h` | `12h` | `24h`（=`1d`） | `2d` | `7d`（=`1w`） |
 
 ## 8. 工作项清单
+
+> **状态（2026-07-05）：W1–W9 全部完成。** W1–W3 于 Phase 1 交付（`logs
+> query/tail/stats/fields/values`，commit `7e0eb19`）；W4 于 Phase 2 交付（本地日志
+> 落盘 + `logs local`，commit `edd992c`）；W5–W9 于 Phase 3+4 交付（collect-all
+> overlay、doctor 日志检查、气隙 runbook、文档 + CLAUDE 模板、CI 扩展）。
 
 | # | 工作项 | 仓库 | 规模 | 依赖 |
 |---|--------|------|------|------|

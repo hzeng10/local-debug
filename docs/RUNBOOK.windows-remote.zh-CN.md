@@ -158,9 +158,14 @@ kubectl -n <ns> get deploy <service> `
   Get-Content .ldbg\<service>.env |
     Where-Object { $_ -and ($_ -notmatch '^\s*#') } |
     ForEach-Object { $k,$v = $_ -split '=',2; [Environment]::SetEnvironmentVariable($k,$v) }
-  .\gradlew.bat bootRun        # 或 java -jar <app>.jar
+  .\mvnw.cmd spring-boot:run   # Maven（或 mvn spring-boot:run）
+  .\gradlew.bat bootRun        # Gradle（或 java -jar <app>.jar）
   ```
-- 也可让 ldbg 直接启动：`ldbg.exe up <service> -n <ns> --run cmd --run /c --run "gradlew.bat bootRun"`
+- 也可让 ldbg 直接启动（stdout 同时落盘到 `.ldbg\logs\<service>.log` 供 `logs local` 查询）：
+  `ldbg.exe up <service> -n <ns> --run cmd --run /c --run "mvnw.cmd spring-boot:run"`
+  （Gradle 则替换为 `"gradlew.bat bootRun"`）
+- env-file 默认注入合成变量 `LOGGING_FILE_NAME`（IDE 启动的应用也会写本地日志文件，零代码
+  改动；不需要时加 `--no-local-log`）。
 
 ### E.3 三项断言（从**集群内部**发起，证明真实接管）
 ```powershell
@@ -179,6 +184,13 @@ kubectl -n <ns> run probe --image=curlimages/curl:8.10.1 --restart=Never --rm -i
 - **配置**：应用以集群环境启动（如 `SPRING_PROFILES_ACTIVE`、数据源等与集群一致）。 ✅
 
 - ✅ **检查点 E**：入站落到笔记本、出站可达依赖、配置一致；可在 IDE 命中断点。
+
+日志侧验证（若集群已部署日志栈，见阶段 G）：
+```powershell
+ldbg.exe logs query <service> --since 30m          # 经隧道查集群日志库
+ldbg.exe logs local <service> --level error        # 拦截期间的本地日志
+ldbg.exe doctor <service> -n <ns>                  # log-store / log-collection 两项检查
+```
 
 ---
 
@@ -212,6 +224,32 @@ kubectl -n <ns> get pod -l <selector>     # 期望 1/1（无 traffic-agent），
 
 - ✅ **检查点 F**：目标工作负载 `1/1`、回到 ambient、无 ldbg 标记、集群内正常服务；
   `telepresence status` 显示守护进程已停止。
+
+---
+
+## 阶段 G — 日志栈离线部署（可选，一次性）
+
+让 `ldbg logs query/tail/stats` 可用的前提：集群内部署
+[log-analysis](https://github.com/hzeng10/log-analysis)（VictoriaLogs + Vector +
+可选 Grafana）。完整步骤见其 **`docs/airgap.md`**（中文），此处只列要点：
+
+1. **有网机器上**：`scripts/save-images.sh` 按 `scripts/images.txt` 拉取并导出镜像 tar
+   （或 `mirror-to-registry.sh <内部仓库>` 直推）。⚠️ **Grafana 定制镜像必须在有网机器上
+   `docker build`**（插件在构建时下载），产物镜像随包分发；只用 CLI 查询可跳过 Grafana。
+2. **气隙侧**：`scripts/load-images.sh` 导入每个节点（或走内部仓库），然后：
+   ```powershell
+   kubectl apply -k deploy/overlays/collect-all/   # 全量采集（调试集群推荐；含基础设施 ns 排除）
+   # 或默认 opt-in 白名单：kubectl apply -k deploy/k8s/
+   ```
+3. **验证**（笔记本上）：
+   ```powershell
+   ldbg.exe doctor <service> -n <ns>          # log-store=pass、log-collection=pass
+   ldbg.exe logs query <service> --since 5m   # 经隧道返回该服务日志
+   ```
+   未连接 telepresence 时 `logs query` 自动走 port-forward，同样可用。
+
+- ✅ **检查点 G**：`victorialogs-0` 与 `vector` DaemonSet Running；doctor 两项日志检查通过；
+  `logs query -n kube-system --since 5m` 计数为 0（排除生效）。
 
 ---
 

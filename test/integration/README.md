@@ -10,6 +10,11 @@ ambient cluster:
 - the local process reaches the in-cluster **dependency** via telepresence
 - the **offline** traffic-manager install path (`ldbg bundle` + `cluster install --import-via kind`)
 - `down` removes the agent **before** reverting ambient, leaving the workload **pristine**
+- the **log pipeline**: the log-analysis stack (VictoriaLogs + Vector, collect-all overlay)
+  collects an **unlabeled** service, excludes `kube-system`, `ldbg logs query` works through
+  the tunnel AND via the **port-forward fallback** while disconnected, `ldbg logs local`
+  parses a Spring-format file, `up` injects `LOGGING_FILE_NAME`, and `doctor` reports the
+  log-store/log-collection checks
 
 ## Files
 
@@ -27,6 +32,7 @@ Needs: `docker`, `kind`, `kubectl`, `istioctl`, `go`, `python3`, and **passwordl
 test/integration/harness.sh          # full run + teardown
 KEEP=1 test/integration/harness.sh   # keep the cluster up for debugging
 TELEPRESENCE_VERSION=2.29.0 test/integration/harness.sh
+LOG_ANALYSIS_REF=main test/integration/harness.sh   # pin the log-analysis ref (cloned into .bin/)
 ```
 
 > ⚠️ The harness installs the telepresence client to `/usr/local/bin` and runs

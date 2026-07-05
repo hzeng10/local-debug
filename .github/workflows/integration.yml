@@ -15,10 +15,11 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       TELEPRESENCE_VERSION: "2.29.0"
       ISTIO_VERSION: "1.30.0"
+      LOG_ANALYSIS_REF: "main"
     steps:
       - uses: actions/checkout@v4
 

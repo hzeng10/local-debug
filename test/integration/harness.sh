@@ -6,15 +6,20 @@
 # for the telepresence root daemon). Run locally only on a throwaway machine.
 #
 # Usage:  test/integration/harness.sh
-# Env:    TELEPRESENCE_VERSION (default 2.29.0), KEEP=1 to skip teardown for debugging.
+# Env:    TELEPRESENCE_VERSION (default 2.29.0), LOG_ANALYSIS_REF (default main),
+#         KEEP=1 to skip teardown for debugging.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 TELEPRESENCE_VERSION="${TELEPRESENCE_VERSION:-2.29.0}"
+LOG_ANALYSIS_REF="${LOG_ANALYSIS_REF:-main}"
+LOG_ANALYSIS_REPO="https://github.com/hzeng10/log-analysis"
 TEL_IMAGE="ghcr.io/telepresenceio/tel2:${TELEPRESENCE_VERSION}"
 WHOAMI_IMAGE="traefik/whoami:v1.10.2"
 CURL_IMAGE="curlimages/curl:8.10.1"
+VLOGS_IMAGE="docker.io/victoriametrics/victoria-logs:v1.51.0"
+VECTOR_IMAGE="docker.io/timberio/vector:0.56.0-distroless-libc"
 BIN="$HERE/.bin"
 LDBG="$BIN/ldbg"
 TP="$BIN/telepresence"
@@ -39,7 +44,7 @@ trap cleanup EXIT
 require() { command -v "$1" >/dev/null 2>&1 || fail "missing required tool: $1"; }
 
 log "Preflight"
-for t in docker kind kubectl istioctl go python3 curl; do require "$t"; done
+for t in docker kind kubectl istioctl go python3 curl git; do require "$t"; done
 mkdir -p "$BIN"
 
 log "Install telepresence client v${TELEPRESENCE_VERSION}"
@@ -73,6 +78,20 @@ log "Offline-install traffic-manager via ldbg (bundle + import-via kind)"
 kubectl -n ambassador rollout status deploy/traffic-manager --timeout=120s
 ok "traffic-manager installed from $TEL_IMAGE"
 
+log "Deploy log stack (log-analysis @ ${LOG_ANALYSIS_REF}, collect-all overlay)"
+if [[ ! -d "$BIN/log-analysis/.git" ]]; then
+  git clone --depth 1 --branch "$LOG_ANALYSIS_REF" "$LOG_ANALYSIS_REPO" "$BIN/log-analysis"
+else
+  git -C "$BIN/log-analysis" fetch --depth 1 origin "$LOG_ANALYSIS_REF" && git -C "$BIN/log-analysis" checkout FETCH_HEAD
+fi
+docker pull "$VLOGS_IMAGE";  kind load docker-image "$VLOGS_IMAGE"
+docker pull "$VECTOR_IMAGE"; kind load docker-image "$VECTOR_IMAGE"
+kubectl apply -k "$BIN/log-analysis/deploy/overlays/collect-all/"
+kubectl -n logging scale deploy grafana --replicas=0   # custom image not built in CI
+kubectl -n logging rollout status statefulset/victorialogs --timeout=180s
+kubectl -n logging rollout status ds/vector --timeout=180s
+ok "log stack up (VictoriaLogs + Vector collect-all)"
+
 log "Deploy sample app (ambient namespace)"
 kubectl apply -f "$HERE/manifests.yaml"
 kubectl -n demo rollout status deploy/dep --timeout=120s
@@ -97,6 +116,8 @@ dpm=$(kubectl -n demo get deploy orders -o jsonpath='{.spec.template.metadata.la
 ann=$(kubectl -n demo get deploy orders -o jsonpath='{.spec.template.metadata.annotations.ldbg\.local-debug/ambient-optout}')
 [[ "$dpm" == "none" && "$ann" == "applied" ]] || fail "ambient opt-out not applied (dpm=$dpm ann=$ann)"
 ok "ambient opt-out applied with ldbg annotation"
+grep -q "LOGGING_FILE_NAME" .ldbg/orders.env || fail "synthetic LOGGING_FILE_NAME not injected into the env-file"
+ok "local-log env injection present in env-file"
 
 incluster() { # run curl from inside the cluster (real takeover origin)
   kubectl -n demo run "probe-$1" --image="$CURL_IMAGE" --restart=Never --rm -i --quiet -- \
@@ -118,6 +139,31 @@ log "ldbg test (tool's own in-cluster assertion)"
 "$LDBG" test orders -n demo --json | grep -q '"succeeded": true' || fail "ldbg test failed"
 ok "ldbg test passed"
 
+# jq-free count extractor for ldbg --json envelopes.
+qcount() { python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["count"])'; }
+
+log "Assert LOG PIPELINE (collect-all via tunnel)"
+sleep 20   # give Vector time to ship the freshly-restarted pods' startup lines
+n_dep=$("$LDBG" logs query dep --since 10m --json | qcount)
+[[ "$n_dep" -ge 1 ]] || fail "unlabeled service 'dep' not collected (count=$n_dep) — collect-all broken"
+ok "collect-all: unlabeled service collected (count=$n_dep)"
+n_ks=$("$LDBG" logs query -n kube-system --since 10m --json | qcount)
+[[ "$n_ks" -eq 0 ]] || fail "kube-system leaked into the log store (count=$n_ks) — namespace exclusion broken"
+ok "namespace exclusion enforced (kube-system count=0)"
+
+log "Assert ldbg logs local (fabricated Spring-format line)"
+mkdir -p .ldbg/logs
+printf '%s  INFO 1 --- [main] c.e.Harness : integration marker\n' "$(date '+%Y-%m-%d %H:%M:%S').000" > .ldbg/logs/orders.log
+n_local=$("$LDBG" logs local orders --json | qcount)
+[[ "$n_local" -eq 1 ]] || fail "logs local did not return the fabricated entry (count=$n_local)"
+ok "logs local works"
+
+log "Assert doctor log checks"
+doctor_json=$("$LDBG" doctor orders -n demo --json || true)
+echo "$doctor_json" | grep -q '"log-store"' || fail "doctor missing log-store check: $doctor_json"
+echo "$doctor_json" | grep -q '"log-collection"' || fail "doctor missing log-collection check: $doctor_json"
+ok "doctor log-store/log-collection checks present"
+
 log "ldbg down (leave -> uninstall agent -> revert ambient -> disconnect)"
 down_json="$("$LDBG" down -n demo --json)"
 echo "$down_json" | grep -q '"uninstalledAgents"' || fail "down did not uninstall the agent: $down_json"
@@ -131,5 +177,11 @@ ann2=$(kubectl -n demo get deploy orders -o jsonpath='{.spec.template.metadata.a
 ncont=$(kubectl -n demo get pod -l app=orders -o jsonpath='{.items[0].spec.containers[*].name}' | wc -w)
 [[ "$ncont" == "1" ]] || fail "traffic-agent not removed (containers=$ncont)"
 ok "orders restored to pristine baseline (in ambient, no agent)"
+
+log "Assert logs query WITHOUT telepresence (client-go port-forward fallback)"
+"$TP" status 2>/dev/null | grep -q "Connected" && fail "expected telepresence to be disconnected here"
+n_pf=$("$LDBG" logs query orders --since 1h --json | qcount)
+[[ "$n_pf" -ge 1 ]] || fail "port-forward fallback query returned nothing (count=$n_pf)"
+ok "port-forward fallback works while disconnected (count=$n_pf)"
 
 log "INTEGRATION PASSED"

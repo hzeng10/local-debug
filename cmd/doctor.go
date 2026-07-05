@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
+	"github.com/hzeng10/local-debug/internal/logquery/client"
+	"github.com/hzeng10/local-debug/internal/logquery/logsql"
 	"github.com/hzeng10/local-debug/internal/mesh"
+	"github.com/hzeng10/local-debug/internal/tp"
 	"github.com/spf13/cobra"
 )
 
@@ -56,8 +60,10 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 		}
 
 		// 3) Connection + traffic-manager (best-effort; needs the daemon).
+		var tpStatus *tp.Status
 		if tpc.Available() {
 			if st, serr := tpc.Status(ctx); serr == nil {
+				tpStatus = st
 				switch {
 				case st.Connected && st.ManagerInstalled:
 					add("traffic-manager", "pass", "connected; manager installed")
@@ -87,6 +93,12 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 			}
 		}
 
+		// 5) Log store + collection coverage (warn-only: the log stack is
+		// optional infrastructure — its absence must not block intercepts).
+		if cl != nil {
+			logStoreChecks(ctx, tpStatus, args, add)
+		}
+
 		rep.OK = !hasFail(rep.Checks)
 		out.Result("doctor", renderDoctor(rep), rep)
 		if !rep.OK {
@@ -94,6 +106,39 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 		}
 		return nil
 	},
+}
+
+// logStoreChecks verifies the VictoriaLogs store is reachable ('ldbg logs query'
+// depends on it) and, given a service, that its logs are actually flowing in —
+// catching "not covered by collection" before a debugging session relies on it.
+func logStoreChecks(ctx context.Context, st *tp.Status, args []string, add func(string, string, string)) {
+	addr, cleanup, source, err := resolveVLogsAddr(ctx, "", "logging", st)
+	if err != nil {
+		add("log-store", "warn", "VictoriaLogs unreachable — 'ldbg logs query' won't work (deploy the log-analysis stack, or pass --vlogs-addr/VLOGS_ADDR to logs commands)")
+		return
+	}
+	defer cleanup()
+	add("log-store", "pass", fmt.Sprintf("VictoriaLogs reachable at %s (%s)", addr, source))
+
+	if len(args) != 1 {
+		return
+	}
+	svc := args[0]
+	q, _, err := logsql.Filter{Service: svc, Since: "15m"}.Build()
+	if err != nil {
+		return
+	}
+	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	logs, err := client.New(addr, 10*time.Second).Query(qctx, q, "", 1, 0)
+	switch {
+	case err != nil:
+		add("log-collection", "warn", fmt.Sprintf("query for %q failed: %v", svc, err))
+	case len(logs) > 0:
+		add("log-collection", "pass", fmt.Sprintf("logs from %q are flowing (seen within 15m)", svc))
+	default:
+		add("log-collection", "warn", fmt.Sprintf("no logs from %q in the last 15m — collection may not cover it (add the logging.example.com/collect=true label, or deploy the collect-all overlay)", svc))
+	}
 }
 
 // assessWorkloadCheck resolves the target and reports whether it needs the ambient
