@@ -82,21 +82,66 @@ kubectl -n ambassador get deploy traffic-manager `
 
 ## 阶段 C — Windows 11 笔记本环境准备（一次性）
 
-1. **安装 Telepresence 客户端 v2.29.0**（与集群一致）：运行安装器
-   `telepresence-windows-amd64-setup.exe`，或解压 `telepresence-windows-amd64.zip` 并把
-   `telepresence.exe` 加入 `PATH`。
+### C.1 工具清单
+
+| 工具 | 版本 | 用途 | 校验命令 |
+|------|------|------|----------|
+| `telepresence.exe` | **2.29.0**（须与集群 manager 一致） | 隧道 + 拦截 | `telepresence version` |
+| `ldbg.exe` | 最新（构建见 README「从源码构建」） | 调试编排 CLI | `ldbg version` |
+| `kubectl.exe` | 与集群相近的版本 | 集群操作/排障 | `kubectl version --client` |
+| JDK | 服务所需（如 21） | 本地运行 Spring Boot | `java -version` |
+| Maven 或 Gradle | 服务所用（wrapper 优先） | 构建/启动 | `.\mvnw.cmd -v` / `.\gradlew.bat -v` |
+| IDE（IntelliJ/VS Code） | 任意近期版 | 断点调试 | IntelliJ 需装 **EnvFile** 插件（net.ashald.envfile） |
+| ClaudeCode | 最新 | AI 驱动调试闭环（可选，配置见阶段 H） | `claude --version` |
+
+安装步骤：
+
+1. **Telepresence 客户端**：运行安装器 `telepresence-windows-amd64-setup.exe`，或解压
+   `telepresence-windows-amd64.zip` 并把 `telepresence.exe` 加入 `PATH`。
    ```powershell
    telepresence version      # 期望 OSS Client : v2.29.0
    ```
-2. **放置 `ldbg.exe`** 到 `PATH`。
-3. **kubeconfig** 指向远程集群（`%USERPROFILE%\.kube\config` 或设置 `$env:KUBECONFIG`）。
+2. **`ldbg.exe` 加入 `PATH`**（推荐放到一个固定目录并追加到用户 PATH）：
    ```powershell
-   kubectl config current-context
-   kubectl get ns
+   New-Item -ItemType Directory -Force $env:USERPROFILE\bin | Out-Null
+   Copy-Item .\ldbg.exe $env:USERPROFILE\bin\
+   [Environment]::SetEnvironmentVariable("Path",
+     [Environment]::GetEnvironmentVariable("Path","User") + ";$env:USERPROFILE\bin", "User")
+   # 新开 PowerShell 窗口后：ldbg version
+   ```
+3. **kubeconfig 指向远程集群**：把集群管理员发放的 kubeconfig 存为
+   `%USERPROFILE%\.kube\config`（或用 `$env:KUBECONFIG` 指定路径）。最小结构示例：
+   ```yaml
+   apiVersion: v1
+   kind: Config
+   clusters:
+     - name: debug-cluster
+       cluster:
+         server: https://10.0.0.10:6443          # 集群 API 地址（内网可达）
+         certificate-authority-data: <BASE64_CA>
+   users:
+     - name: dev-user
+       user:
+         token: <SERVICE_ACCOUNT_TOKEN>           # 或 client-certificate-data/client-key-data
+   contexts:
+     - name: debug
+       context: { cluster: debug-cluster, user: dev-user, namespace: demo }
+   current-context: debug
+   ```
+   ```powershell
+   kubectl config current-context    # 期望 debug
+   kubectl get ns                    # 能列出远程命名空间
+   ```
+   > RBAC 最低要求：目标命名空间内 get/list pods、deployments、services、configmaps、secrets，
+   > patch deployments（ambient 豁免）；`ambassador`、`logging` 命名空间 get/list（doctor/日志）。
+4. **服务仓库工作区**：在服务仓库根目录使用 ldbg（生成的 `.ldbg/`、`.run/` 都落在这里），
+   并把以下条目加入服务仓库 `.gitignore`：
+   ```gitignore
+   .ldbg/
+   *.env
    ```
 
-- ✅ **检查点 C**：`telepresence version` = 2.29.0；`ldbg version` 正常；`kubectl get ns` 可列出
-  远程命名空间。
+- ✅ **检查点 C**：上表校验命令全部通过；`kubectl get ns` 可列出远程命名空间。
 
 ---
 
@@ -253,6 +298,104 @@ kubectl -n <ns> get pod -l <selector>     # 期望 1/1（无 traffic-agent），
 
 ---
 
+## 阶段 H — 配置 ClaudeCode 驱动 ldbg（一次性，可选）
+
+目标：在**服务仓库**里配置好 ClaudeCode，让它无需人工带路即可跑通
+「接管 → 复现 → 查日志 → 改代码 → 验证 → 收尾」闭环；开发者只负责 IDE 断点。
+
+### H.1 安装 ClaudeCode（Windows 11）
+
+```powershell
+irm https://claude.ai/install.ps1 | iex     # 原生安装器（推荐）
+# 或：npm install -g @anthropic-ai/claude-code
+claude --version
+```
+
+首次运行 `claude` 按提示登录（Pro/Max 订阅或 API Key）。气隙注意：ClaudeCode 本身需要
+访问 Anthropic API —— 笔记本须有外网（或经代理），只有**集群侧**是气隙的；若笔记本也
+完全无外网，则跳过本阶段，纯手工使用 ldbg。
+
+### H.2 在服务仓库放置 `CLAUDE.md`
+
+把本仓库 [`docs/CLAUDE-template.zh-CN.md`](CLAUDE-template.zh-CN.md) 分隔线之间的内容拷贝为
+服务仓库根目录的 `CLAUDE.md`，并替换占位符。以 `orders`（Maven，命名空间 `demo`）为例，
+关键行替换后形如：
+
+```markdown
+- 服务名：`orders`　命名空间：`demo`　本地构建/启动：`.\mvnw.cmd spring-boot:run`
+```
+
+模板已包含：标准调试闭环命令序列、envelope 语义（`ok/data/error/hint`、`truncated`）、
+时间窗口词汇（5m…7d）、拦截期间 `logs local` 与 `logs query` 的分工、以及
+「connect 需要用户手动提权」的处理方式 —— ClaudeCode 读到即可正确行动。
+
+### H.3 权限配置（免打扰运行 ldbg，同时挡住危险操作）
+
+在服务仓库创建 `.claude/settings.json`（团队共享，随仓库提交）：
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(ldbg:*)",
+      "Bash(ldbg.exe:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(telepresence status:*)",
+      "Bash(telepresence version:*)",
+      "Bash(mvnw.cmd:*)",
+      "Bash(gradlew.bat:*)"
+    ],
+    "deny": [
+      "Bash(kubectl delete:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl patch:*)",
+      "Bash(kubectl edit:*)",
+      "Bash(telepresence uninstall:*)",
+      "Bash(telepresence helm:*)"
+    ]
+  }
+}
+```
+
+- 思路：**放行 ldbg 全部子命令**（集群改动都由 ldbg 内部受控执行：ambient 豁免、拦截、
+  还原），kubectl 只放行只读动词；直接改集群的 kubectl/telepresence 管理命令显式拒绝，
+  共享集群更安全。个人偏好（如额外放行 `Bash(jq:*)`）放 `.claude/settings.local.json`（不提交）。
+- 可选环境变量：日志后端地址特殊时，在会话里或 settings 的 `env` 中设
+  `VLOGS_ADDR=http://<地址>:9428`（默认无需设置——ldbg 自动走隧道或 port-forward）。
+
+### H.4 典型用法（提示词示例）
+
+在服务仓库根目录运行 `claude`，然后例如：
+
+```text
+> 帮我调试 orders：接管到本地并启动，复现「下单偶发 500」，
+  查最近 4 小时集群日志里的相关异常，定位后修掉并验证，最后清理。
+```
+
+期望 ClaudeCode 的行为（模板 + 权限配置生效的标志）：
+
+```powershell
+ldbg doctor orders -n demo --json          # 预检（含 log-store/log-collection）
+ldbg up orders -n demo --run .\mvnw.cmd --run spring-boot:run --json
+ldbg test orders -n demo --json            # 断言接管生效
+ldbg logs query orders --since 4h -q Exception --json   # 历史（集群侧）
+ldbg logs local --level error --json       # 拦截期间的本地新日志（堆栈完整）
+# …读堆栈 → 改代码 → 重启本地进程 → ldbg test 验证…
+ldbg logs stats "by (level) count() as c" --since 10m --json   # 错误归零 = 验收
+ldbg down --json                           # 必须收尾
+```
+
+已知的一次人工介入：首次 `telepresence connect` 需要管理员/UAC 提权，ClaudeCode 会提示你
+在自己的终端里执行一次（`telepresence connect -n demo`），之后整个会话它都能自主运行。
+
+- ✅ **检查点 H**：`claude` 内让其执行 `ldbg status --json` 不弹权限确认；让其执行
+  `kubectl delete pod xxx` 被拒绝；对着 CLAUDE.md 里的服务名能独立跑完一轮
+  up → test → logs → down。
+
+---
+
 ## 验收清单（Pass / Fail Gates）
 
 | # | 验收点 | 命令 / 证据 | 通过标准 |
@@ -357,15 +500,19 @@ spec: { selector: { app: orders }, ports: [{ name: http, port: 8080, targetPort:
 ## 8. 一页速查
 
 ```powershell
-# 一次性
+# 一次性（安装/部署）
 ldbg.exe bundle --out tel2-bundle.tar                                   # 有网机
 ldbg.exe cluster install --bundle tel2-bundle.tar --import-via registry --registry <repo>  # 集群侧
+#   日志栈（可选）：见阶段 G；ClaudeCode 配置（可选）：见阶段 H
+#   （服务仓库放 CLAUDE.md + .claude/settings.json 权限）
 
 # 每个会话
 telepresence connect -n <ns>                  # 管理员/UAC，一次
-ldbg.exe doctor <svc> -n <ns>                 # 预检
-ldbg.exe up <svc> -n <ns>                     # 同步+豁免+拦截
-#   在 IDE 用 .ldbg\<svc>.env 调试 / 或 gradlew.bat bootRun
+ldbg.exe doctor <svc> -n <ns>                 # 预检（含 log-store/log-collection）
+ldbg.exe up <svc> -n <ns> --run .\mvnw.cmd --run spring-boot:run   # 同步+豁免+拦截+启动
+#   或在 IDE 用 .ldbg\<svc>.env 调试（EnvFile 插件）/ gradlew.bat bootRun
 ldbg.exe test <svc> -n <ns>                   # 集群内验证落到本地
+ldbg.exe logs query <svc> --since 4h -q Exception   # 集群日志库（历史）
+ldbg.exe logs local --level error             # 拦截期间的本地日志
 ldbg.exe down -n <ns>                         # 收尾+卸载agent+还原ambient+断开
 ```

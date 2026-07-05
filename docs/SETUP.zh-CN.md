@@ -238,6 +238,8 @@ ldbg logs local --level error --json              # data.source=local-file
 `ldbg up/test/status`、`logs query`/`logs local`、读堆栈、改代码、迭代，二者共享同一个
 `ldbg` 会话。给业务服务仓库放一份
 [`CLAUDE-template.zh-CN.md`](CLAUDE-template.zh-CN.md)，代理即可即插即用。
+ClaudeCode 的安装、`.claude/settings.json` 权限白名单示例与典型提示词，见
+[RUNBOOK 阶段 H](RUNBOOK.windows-remote.zh-CN.md#阶段-h--配置-claudecode-驱动-ldbg一次性可选)。
 
 ---
 
