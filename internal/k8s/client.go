@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -64,4 +65,15 @@ func (c *Client) Ping(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("cluster unreachable or RBAC denied: %w", err)
 	}
 	return v.GitVersion, nil
+}
+
+// ProbeReadPods lists at most one pod in ns to confirm the current credentials
+// have namespaced read RBAC — a representative check for what ldbg actually reads
+// (pods, services, workloads). It returns the number of pods in the capped list.
+func (c *Client) ProbeReadPods(ctx context.Context, ns string) (int, error) {
+	pl, err := c.cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	return len(pl.Items), nil
 }

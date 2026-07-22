@@ -396,6 +396,81 @@ ldbg down --json                           # 必须收尾
 
 ---
 
+## 阶段 J — 远程 kubectl / SSH 跳板机接入（可选：笔记本无法直连集群 API 时）
+
+**适用场景**：`kubectl` 只装在集群侧的**跳板机（bastion）**上，Windows 11 笔记本上既没有
+`kubectl`、也没有 kubeconfig，无法直接到达集群 API。只要笔记本能 **SSH 到跳板机**，就用
+`ssh -L` TCP 隧道桥接（Windows 11 自带 OpenSSH 客户端，`ssh -L` 开箱即用）。
+
+> 关键事实（本项目实测校正）：曾以为 `kubectl proxy` 这类反向代理会**丢掉** port-forward 所需的
+> 流升级（SPDY/WebSocket）。实测推翻了这个假设——`kubectl proxy` 用的是 Kubernetes 自己的
+> *upgrade-aware* 代理，能把 port-forward 透传过去（`ssh -L` 只是透明 TCP 隧道，不影响升级）。
+> 但**是否可用取决于 kubectl/集群版本以及链路上是否还有其它代理/负载均衡**，所以别假设——用
+> `ldbg cluster probe` 逐环境确认。
+
+### J.1 日志（最稳：无需本地 kubectl、无需代理）
+
+在**跳板机**直接把日志库端口 forward 出来，笔记本用 `ssh -L` 把这个普通 TCP 端口引到本地。
+这条路**完全不依赖代理承载升级**，最稳：
+
+```bash
+# 跳板机（bastion）
+kubectl port-forward -n logging svc/victorialogs 9428:9428 --address 127.0.0.1
+
+# 笔记本（Windows PowerShell / 任意终端）
+ssh -L 9428:127.0.0.1:9428 user@bastion
+
+# 笔记本：无需任何 kubeconfig
+ldbg cluster probe --vlogs-addr http://127.0.0.1:9428          # 期望：log-store ✓
+ldbg logs query orders --vlogs-addr http://127.0.0.1:9428 --since 30m
+ldbg logs tail  orders --vlogs-addr http://127.0.0.1:9428
+```
+
+也可用 `ldbg cluster tunnel --bastion user@bastion` 直接打印上面这套命令。
+
+### J.2 API / REST（sync 等 client-go 操作）
+
+在跳板机跑 `kubectl proxy`（它用跳板机自己的凭据认证），笔记本 `ssh -L` 引到本地，再指向一份
+**无凭据**的最小 kubeconfig：
+
+```bash
+# 跳板机
+kubectl proxy --port=8001 --address 127.0.0.1
+
+# 笔记本
+ssh -L 8001:127.0.0.1:8001 user@bastion
+ldbg cluster kubeconfig --api http://127.0.0.1:8001 --out proxy.kubeconfig
+ldbg --kubeconfig proxy.kubeconfig sync orders -n demo
+```
+
+### J.3 用 `ldbg cluster probe` 确认这座桥能承载什么
+
+在依赖某条链路之前，先跑 probe，逐项看 pass/fail：
+
+```bash
+ldbg cluster probe --kubeconfig proxy.kubeconfig --vlogs-addr http://127.0.0.1:9428
+# ✓ api           REST + 认证可达
+# ✓ rbac          能读命名空间内 Pod
+# ✓/✗ port-forward 这座桥是否承载流升级（决定性一项）
+# ✓ log-store      经隧道的 VictoriaLogs /health 可达
+```
+
+- **port-forward = ✓**：这座桥能承载 port-forward，笔记本侧的日志/端口转发都能用。
+- **port-forward = ✗**（api 却是 ✓）：该链路不承载升级（个别代理/老版本），回退到 J.1 的
+  跳板机 `kubectl port-forward` + `ssh -L`；probe 会把这条建议直接打印出来。
+
+### J.4 重要限制：完整拦截应在跳板机上运行
+
+`ldbg up`（Telepresence 全量拦截）需要到 **Pod 网段的网络** + traffic-manager 连接，仅有一个
+REST 代理并不够。因此在这种拓扑下：**完整拦截在跳板机上运行**（在跳板机装 `ldbg` +
+Telepresence 客户端，按阶段 D/E 执行），**笔记本侧保留日志查询与只读操作**（J.1/J.2）。
+
+- ✅ **检查点 J**：`ldbg cluster probe --vlogs-addr http://127.0.0.1:9428` 显示 `log-store ✓`，
+  且 `ldbg logs query <svc> --vlogs-addr http://127.0.0.1:9428 --since 30m` 能返回记录——
+  全程笔记本上没有 kubeconfig。
+
+---
+
 ## 验收清单（Pass / Fail Gates）
 
 | # | 验收点 | 命令 / 证据 | 通过标准 |

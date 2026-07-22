@@ -54,7 +54,8 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 		if err != nil {
 			add("kubeconfig", "fail", err.Error())
 		} else if v, perr := cl.Ping(ctx); perr != nil {
-			add("cluster-reachable", "fail", perr.Error())
+			add("cluster-reachable", "fail", perr.Error()+
+				" — if the cluster is reached via an SSH tunnel / kubectl proxy, run 'ldbg cluster probe' to see what the bridge carries")
 		} else {
 			add("cluster-reachable", "pass", "kubernetes "+v)
 		}
