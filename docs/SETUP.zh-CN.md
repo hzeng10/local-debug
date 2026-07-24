@@ -266,7 +266,7 @@ ClaudeCode 的安装、`.claude/settings.json` 权限白名单示例与典型提
 | traffic-manager 起不来 / ImagePull 失败 | 镜像没侧载成功，或 `images.registry/agentImage` 没指向已导入镜像。重做 §4，确认 `imagePullPolicy=IfNotPresent` 且镜像在集群可见。 |
 | 客户端与 manager 版本不一致 | 让 `telepresence version`（客户端）与 §4 安装版本一致（默认 2.29.0）。 |
 | 出站调用被依赖的 L4 AuthorizationPolicy 拒绝 | 实测中本地出站经由 traffic-agent 所在 Pod 出去，源 IP 表现为被拦截工作负载的 Pod IP，因此按调用方身份鉴权通常**可通过**；如仍被拒，检查该依赖上是否有更严格的 PeerAuthentication/AuthorizationPolicy。 |
-| 笔记本上没有 kubectl / kubeconfig，`kubectl` 只在跳板机 | 用 `ssh -L` 隧道桥接：跳板机 `kubectl port-forward svc/victorialogs` + 笔记本 `ldbg logs query --vlogs-addr http://127.0.0.1:9428`；先用 `ldbg cluster probe` 确认桥接可用。完整拦截应在跳板机上运行。详见 [RUNBOOK 阶段 J](RUNBOOK.windows-remote.zh-CN.md)。 |
+| 笔记本上没有 kubectl / kubeconfig，`kubectl` 只在跳板机/节点 | 首选 `ldbg cluster fetch-kubeconfig --ssh user@节点` 拉取真凭证 + `ssh -L` 直通 apiserver——笔记本获得完整能力（含 `ldbg up`）。禁止携出凭证时退回：跳板机 `kubectl port-forward svc/victorialogs` + 笔记本 `ldbg logs query --vlogs-addr http://127.0.0.1:9428`，拦截跑在跳板机。先用 `ldbg cluster probe` 确认桥接可用。详见 [RUNBOOK 阶段 J](RUNBOOK.windows-remote.zh-CN.md)。 |
 
 ---
 
@@ -285,4 +285,5 @@ ldbg cluster install --bundle ...    # （集群侧）离线安装 traffic-manag
 ldbg cluster probe --vlogs-addr <url> --kubeconfig <file>   # 验证隧道/代理桥接能承载什么
 ldbg cluster tunnel --bastion user@host                     # 打印 ssh -L 接入命令
 ldbg cluster kubeconfig --api http://127.0.0.1:8001 --out proxy.kubeconfig  # 生成最小 kubeconfig
+ldbg cluster fetch-kubeconfig --ssh user@节点IP                # 经 SSH 拉取凭证并改写为走 ssh -L 隧道（完整能力）
 ```

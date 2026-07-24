@@ -248,7 +248,7 @@ Windows 11 ships the OpenSSH client, so 'ssh -L' works out of the box.`,
   laptop :  ldbg --kubeconfig proxy.kubeconfig sync <service>
   verify :  ldbg cluster probe --kubeconfig proxy.kubeconfig`,
 			tunAPIPort, bastion)
-		human := logs + "\n\n" + api + "\n\nNote: a full intercept needs pod-network/port-forward access, so run it on the bastion."
+		human := logs + "\n\n" + api + "\n\nNote: for FULL capability (incl. a telepresence intercept, 'ldbg up') pull real\ncredentials off the node instead: 'ldbg cluster fetch-kubeconfig --ssh " + bastion + "'\nthen tunnel the apiserver port directly with 'ssh -L' and verify with 'ldbg cluster probe'.\nOtherwise run the intercept on the bastion; the proxy bridge above is REST-only."
 		out.Result("cluster tunnel", human, map[string]any{
 			"bastion":   bastion,
 			"logsSteps": logs,

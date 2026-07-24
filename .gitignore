@@ -3,6 +3,9 @@
 *.env
 !example.env
 
+# Fetched/generated cluster credentials (ldbg cluster fetch-kubeconfig / kubeconfig)
+*.kubeconfig
+
 # Build output
 /dist/
 /ldbg

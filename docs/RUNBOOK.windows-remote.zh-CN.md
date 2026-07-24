@@ -459,15 +459,52 @@ ldbg cluster probe --kubeconfig proxy.kubeconfig --vlogs-addr http://127.0.0.1:9
 - **port-forward = ✗**（api 却是 ✓）：该链路不承载升级（个别代理/老版本），回退到 J.1 的
   跳板机 `kubectl port-forward` + `ssh -L`；probe 会把这条建议直接打印出来。
 
-### J.4 重要限制：完整拦截应在跳板机上运行
+### J.4 限制（仅针对 J.2 的无凭证 REST 代理桥）：完整拦截在跳板机上运行
 
-`ldbg up`（Telepresence 全量拦截）需要到 **Pod 网段的网络** + traffic-manager 连接，仅有一个
-REST 代理并不够。因此在这种拓扑下：**完整拦截在跳板机上运行**（在跳板机装 `ldbg` +
-Telepresence 客户端，按阶段 D/E 执行），**笔记本侧保留日志查询与只读操作**（J.1/J.2）。
+只走 J.2 那座**无凭证** `kubectl proxy` 桥时，`ldbg up`（Telepresence 全量拦截）没有验证过 ——
+此时**完整拦截在跳板机上运行**（在跳板机装 `ldbg` + Telepresence 客户端，按阶段 D/E 执行），
+笔记本侧保留日志查询与只读操作（J.1/J.2）。**想在笔记本上跑完整拦截，走 J.5。**
 
-- ✅ **检查点 J**：`ldbg cluster probe --vlogs-addr http://127.0.0.1:9428` 显示 `log-store ✓`，
-  且 `ldbg logs query <svc> --vlogs-addr http://127.0.0.1:9428 --since 30m` 能返回记录——
-  全程笔记本上没有 kubeconfig。
+### J.5 完整能力（推荐）：`fetch-kubeconfig` 拉取真凭证 + `ssh -L` 直通 apiserver
+
+节点/跳板机上的 kubectl 本来就带着可用凭证，`kubectl config view --raw --flatten --minify`
+一条命令即可**自包含导出**（证书全部内联）。`ldbg cluster fetch-kubeconfig` 把「经 SSH 导出 →
+改写 `server:` 指向本地隧道端口 → 用 `tls-server-name` 保留完整 TLS 校验 → 0600 落盘」一步做完：
+
+```powershell
+# 笔记本（Windows PowerShell；ssh 为系统自带，可交互输密码）
+ldbg cluster fetch-kubeconfig --ssh root@<节点IP>
+#   输出会打印按实际 apiserver 地址生成的隧道命令，例如：
+#   ssh -N -L 6443:10.0.0.5:6443 root@<节点IP>
+
+# 保持隧道（照抄输出；或 Start-Process ssh -ArgumentList ... 放后台）
+ssh -N -L 6443:<apiserver地址>:<apiserver端口> root@<节点IP>
+
+# 验证（关键看 port-forward ✓ —— 这就是 telepresence 所需的那条通道）
+ldbg cluster probe --kubeconfig .\tunnel.kubeconfig
+
+# 之后一切照旧，包括完整拦截：
+$env:KUBECONFIG = "$PWD\tunnel.kubeconfig"
+ldbg sync orders -n demo
+ldbg up orders -n demo
+```
+
+原理：telepresence 经 **apiserver port-forward** 到达 traffic-manager 并把集群流量都封装在这条
+连接里；`ssh -L` 是透明 TCP 管道，承载流升级（probe 的 port-forward 项即放行判据，实测通过，
+包括经该隧道真实取回日志记录）。注意：
+
+- 节点上 `kubectl config view` 需要 root 时：`--remote-cmd "sudo cat /etc/kubernetes/admin.conf"`
+  （kubeadm）；RKE2 `/etc/rancher/rke2/rke2.yaml`；k3s `/etc/rancher/k3s/k3s.yaml`。
+- **`tunnel.kubeconfig` 即集群凭证**：0600 写出、绝不打印、`*.kubeconfig` 已 gitignore；
+  若安全策略禁止把凭证带出集群，退回 J.1/J.2 + 拦截跑在跳板机（J.4）。
+- 证书按 `tls-server-name`（默认取原 apiserver 主机名/IP）校验，CA 校验**未跳过**；
+  证书异常时才考虑 `--insecure`。
+
+- ✅ **检查点 J**：任一路径达成即可——
+  （无凭证路径）`ldbg cluster probe --vlogs-addr http://127.0.0.1:9428` 显示 `log-store ✓`，
+  且 `ldbg logs query <svc> --vlogs-addr http://127.0.0.1:9428 --since 30m` 返回记录，全程无 kubeconfig；
+  （真凭证路径）`ldbg cluster probe --kubeconfig tunnel.kubeconfig` **四项全 ✓**（含 port-forward），
+  且 `ldbg --kubeconfig tunnel.kubeconfig logs query <svc> --since 30m` 经隧道返回记录。
 
 ---
 
