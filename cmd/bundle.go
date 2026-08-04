@@ -93,7 +93,7 @@ name, so the air-gapped install steps do not change.`,
 			size, perr := offline.NativePull(ctx, src, canonical, bundlePlatform, outPath,
 				offline.PullOpts{Creds: bundleCreds, Insecure: bundleInsecure})
 			if perr != nil {
-				return bundleFail(perr, canonical, src, dockerOK)
+				return bundleFail(perr, src, engine, dockerOK)
 			}
 			res.Pulled, res.SizeBytes = true, size
 			if src != canonical {
@@ -122,7 +122,7 @@ name, so the air-gapped install steps do not change.`,
 		default:
 			out.Info("… docker pull --platform %s %s", bundlePlatform, src)
 			if perr := offline.DockerPull(ctx, src, bundlePlatform); perr != nil {
-				return bundleFail(perr, canonical, src, dockerOK)
+				return bundleFail(perr, src, engine, dockerOK)
 			}
 			if src != canonical {
 				if terr := offline.DockerTag(ctx, src, canonical); terr != nil {
@@ -135,7 +135,7 @@ name, so the air-gapped install steps do not change.`,
 
 		out.Info("… docker save → %s", outPath)
 		if serr := offline.DockerSave(ctx, canonical, outPath, bundlePlatform, caps); serr != nil {
-			return bundleFail(serr, canonical, src, dockerOK)
+			return bundleFail(serr, src, engine, dockerOK)
 		}
 		if fi, ferr := os.Stat(outPath); ferr == nil {
 			res.SizeBytes = fi.Size()
@@ -179,9 +179,11 @@ func resolveBundleEngine(ctx context.Context, image string, dockerOK bool, caps 
 // bundleFail classifies the failure and adds the one next step that actually
 // applies — plus, for DNS failures, whether the outage is this machine's or only
 // the docker daemon's.
-func bundleFail(err error, canonical, src string, dockerOK bool) error {
+// It takes the *source* reference, not the canonical one: with --from it is the
+// mirror that was unreachable, and naming ghcr.io there would be a lie.
+func bundleFail(err error, src, engine string, dockerOK bool) error {
 	kind := offline.Classify(err.Error())
-	hint := offline.HintFor(kind, canonical, bundlePlatform, dockerOK)
+	hint := offline.HintFor(kind, src, bundlePlatform, engine, dockerOK)
 	if kind == offline.FailDNS {
 		host := registryHost(src)
 		if diag, selfCheck := dnsDiagnosis(host); diag != "" {

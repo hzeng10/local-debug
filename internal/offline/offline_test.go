@@ -14,6 +14,14 @@ const dockerDNSErr = `docker pull ghcr.io/telepresenceio/tel2:2.29.0: Error resp
 	`failed to fetch anonymous token: Get "https://ghcr.io/token?scope=repository%3Atelepresenceio%2Ftel2%3Apull&service=ghcr.io": ` +
 	`dial tcp: lookup ghcr.io on 127.0.0.53:53: read udp 127.0.0.1:49842->127.0.0.53:53: i/o timeout`
 
+// What a Windows 11 laptop with no route to ghcr.io actually produced. DNS worked
+// (the IP is in the message); the TCP handshake timed out, and winsock words that
+// nothing like Unix does.
+const windowsConnectTimeout = `pull ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64): ` +
+	`Get "https://ghcr.io/v2/": dial tcp 20.205.243.164:443: connectex: A connection attempt failed ` +
+	`because the connected party did not properly respond after a period of time, or established ` +
+	`connection failed because connected host has failed to respond.`
+
 func TestClassify(t *testing.T) {
 	cases := []struct {
 		name string
@@ -32,6 +40,10 @@ func TestClassify(t *testing.T) {
 		{"docker missing", `exec: "docker": executable file not found in $PATH`, FailDaemon},
 		{"registry unreachable", `Get "https://harbor.corp/v2/": dial tcp 10.0.0.9:443: connect: connection refused`, FailNet},
 		{"blocked route", `dial tcp 140.82.116.33:443: connect: no route to host`, FailNet},
+		// Windows phrases socket errors entirely differently — matching only the
+		// Unix strings dropped every Windows network failure into "unknown".
+		{"windows connect timeout (reported from Win11)", windowsConnectTimeout, FailNet},
+		{"windows connection refused", `dial tcp 10.0.0.9:443: connectex: No connection could be made because the target machine actively refused it.`, FailNet},
 		{"unrecognised", `something else entirely`, FailUnknown},
 	}
 	for _, c := range cases {
@@ -44,18 +56,40 @@ func TestClassify(t *testing.T) {
 }
 
 func TestHintForDNSOffersBothEscapeHatches(t *testing.T) {
-	h := HintFor(FailDNS, ImageFor("2.29.0"), DefaultPlatform, true)
+	h := HintFor(FailDNS, ImageFor("2.29.0"), DefaultPlatform, "docker", true)
 	for _, want := range []string{"--no-pull", "--from"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("DNS hint %q must mention %s", h, want)
 		}
 	}
 	// Without docker there is no local image to fall back on.
-	if h := HintFor(FailDNS, ImageFor("2.29.0"), DefaultPlatform, false); strings.Contains(h, "--no-pull") {
+	if h := HintFor(FailDNS, ImageFor("2.29.0"), DefaultPlatform, "native", false); strings.Contains(h, "--no-pull") {
 		t.Errorf("hint should not suggest --no-pull when docker is absent: %q", h)
 	}
-	if h := HintFor(FailDaemon, "", "", false); !strings.Contains(h, "--engine native") {
+	if h := HintFor(FailDaemon, "", "", "docker", false); !strings.Contains(h, "--engine native") {
 		t.Errorf("daemon hint must point at the daemon-free engine: %q", h)
+	}
+}
+
+// A hint that tells you to use the engine you are already using is noise; that is
+// exactly what the Windows report showed ("--engine native" while on native).
+func TestHintNeverSuggestsTheEngineInUse(t *testing.T) {
+	img := ImageFor("2.29.0")
+	for _, kind := range []FailKind{FailNet, FailUnknown} {
+		if h := HintFor(kind, img, DefaultPlatform, "native", false); strings.Contains(h, "--engine native") {
+			t.Errorf("%s hint suggests the engine already in use: %q", kind, h)
+		}
+		if h := HintFor(kind, img, DefaultPlatform, "docker", true); strings.Contains(h, "--engine docker") {
+			t.Errorf("%s hint suggests the engine already in use: %q", kind, h)
+		}
+		// The other engine is worth offering when it exists.
+		if h := HintFor(kind, img, DefaultPlatform, "docker", true); !strings.Contains(h, "--engine native") {
+			t.Errorf("%s hint should offer the daemon-free engine: %q", kind, h)
+		}
+	}
+	// Every unreachable-registry hint must name the mirror escape hatch.
+	if h := HintFor(FailNet, img, DefaultPlatform, "native", false); !strings.Contains(h, "--from") {
+		t.Errorf("net hint must offer --from: %q", h)
 	}
 }
 

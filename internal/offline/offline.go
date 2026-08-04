@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -223,17 +224,39 @@ func Classify(s string) FailKind {
 		strings.Contains(l, "denied:") || strings.Contains(l, "authentication required") ||
 		strings.Contains(l, "forbidden"):
 		return FailAuth
-	case strings.Contains(l, "connection refused") || strings.Contains(l, "no route to host") ||
-		strings.Contains(l, "network is unreachable") || strings.Contains(l, "connection reset") ||
-		strings.Contains(l, "context deadline exceeded") || strings.Contains(l, "i/o timeout"):
+	case isNetSymptom(l):
 		return FailNet
 	default:
 		return FailUnknown
 	}
 }
 
-// HintFor turns a FailKind into the concrete next step for this command.
-func HintFor(kind FailKind, image, platform string, dockerPresent bool) string {
+// isNetSymptom matches connect-level failures. Windows phrases these completely
+// differently from Unix — winsock returns "connectex: A connection attempt failed
+// because the connected party did not properly respond…" (WSAETIMEDOUT) and "No
+// connection could be made because the target machine actively refused it"
+// (WSAECONNREFUSED) — so matching only the Unix strings silently drops every
+// Windows network failure into "unknown".
+func isNetSymptom(l string) bool {
+	for _, s := range []string{
+		// Unix
+		"connection refused", "no route to host", "network is unreachable",
+		"connection reset", "context deadline exceeded", "i/o timeout",
+		// Windows (winsock)
+		"connectex", "did not properly respond", "actively refused",
+		"host has failed to respond", "a socket operation was attempted to an unreachable",
+		"the semaphore timeout period has expired",
+	} {
+		if strings.Contains(l, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// HintFor turns a FailKind into the concrete next step for this command. engine is
+// the engine that just failed, so the advice never suggests the one already in use.
+func HintFor(kind FailKind, image, platform, engine string, dockerPresent bool) string {
 	switch kind {
 	case FailDNS:
 		h := "the registry hostname could not be resolved — check your network/VPN and DNS, then retry"
@@ -242,7 +265,8 @@ func HintFor(kind FailKind, image, platform string, dockerPresent bool) string {
 		}
 		return h + "; behind a blocked/unstable ghcr.io, pull through a mirror: 'ldbg bundle --from <registry/path>'"
 	case FailNet:
-		return "the registry resolved but could not be reached — check the network/VPN and any proxy (HTTPS_PROXY/HTTP_PROXY), or pull through a reachable mirror with --from <registry/path>"
+		return fmt.Sprintf("%s resolved but the connection timed out or was refused — this machine has no route to it (blocked network? VPN off?). %s, or pull through a reachable mirror: --from <registry/path>%s. You can also build the bundle on a machine that can reach it and copy the tar over — the archive is all the air-gapped side needs",
+			registryOf(image), proxyHint(), altEngineHint(engine, dockerPresent))
 	case FailAuth:
 		return "registry refused the credentials — for a private mirror pass --creds user:password (ghcr.io needs none for public images, so this usually means the anonymous token request itself failed: see DNS/proxy)"
 	case FailNotFound:
@@ -252,8 +276,39 @@ func HintFor(kind FailKind, image, platform string, dockerPresent bool) string {
 	case FailDaemon:
 		return "docker is not usable here — the default engine needs no Docker at all: retry with '--engine native' (or start Docker if you want the docker path)"
 	default:
-		return "run with --engine native to bypass Docker, or --from <registry/path> to pull through a mirror"
+		return fmt.Sprintf("pull through a mirror with --from <registry/path>%s, or build the bundle where the registry is reachable and copy the tar over", altEngineHint(engine, dockerPresent))
 	}
+}
+
+// proxyHint spells the proxy variable the way the user's shell wants it.
+func proxyHint() string {
+	if runtime.GOOS == "windows" {
+		return `set a proxy ($env:HTTPS_PROXY = "http://<host>:<port>")`
+	}
+	return `set a proxy (export HTTPS_PROXY=http://<host>:<port>)`
+}
+
+// altEngineHint suggests the *other* engine, never the one that just failed.
+func altEngineHint(engine string, dockerPresent bool) string {
+	switch {
+	case engine == "native" && dockerPresent:
+		return ", try --engine docker (its proxy/registry-mirror settings may differ)"
+	case engine == "docker":
+		return ", try --engine native (no Docker, honours HTTPS_PROXY directly)"
+	default:
+		return ""
+	}
+}
+
+// registryOf names the registry host in an image reference, for readable hints.
+func registryOf(image string) string {
+	if i := strings.Index(image, "/"); i > 0 {
+		return image[:i]
+	}
+	if image == "" {
+		return "the registry"
+	}
+	return image
 }
 
 // Importer describes how to load the bundled image into the air-gapped cluster.
