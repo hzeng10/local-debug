@@ -69,9 +69,30 @@ ldbg bundle --tp-version 2.29.0 --platform linux/arm64   # → tel2-bundle-arm64
 ```
 
 **不需要本机装 Docker**：`ldbg bundle` 默认（`--engine auto`）直接与 registry 通信把镜像拉下来，
-写成与 `docker save` 同格式的 docker-archive —— Windows 11 全新机器、没装 Docker 也能用，
-`HTTPS_PROXY` / `HTTP_PROXY` 环境变量生效。若本机已装 Docker 且镜像已在本地，则直接
-`docker save`（不联网）。**一个 tar 只装一个架构**，两种架构就跑两次。
+写成与 `docker save` 同格式的 docker-archive —— Windows 11 全新机器、没装 Docker 也能用。
+若本机已装 Docker 且镜像已在本地，则直接 `docker save`（不联网）。**一个 tar 只装一个架构**，
+两种架构就跑两次。
+
+**代理 / VPN**（生效顺序：`--proxy` > `HTTPS_PROXY`/`HTTP_PROXY` > Windows 系统代理 > 直连，
+拉取时会打印实际用的是哪一个）：
+
+```bash
+ldbg bundle --proxy http://127.0.0.1:7890     # 显式指定
+export HTTPS_PROXY=http://127.0.0.1:7890      # 或环境变量（Windows: $env:HTTPS_PROXY=...）
+ldbg bundle --proxy http://proxy.corp:3128 --proxy-creds 'alice:p@ss/w0rd'   # 认证型代理
+```
+
+> **认证型代理必须显式给凭证**：Windows 注册表里只存代理地址，账号密码在凭据管理器中、
+> 取不到，所以自动识别出来的系统代理是"裸"的，直接用会收到 **407**。用
+> `--proxy-creds user:password`，不要把凭证写进 URL —— 密码含 `@` `/` `:` 时 URL 会被解析错。
+> 代理返回 407 时，ldbg 的提示会明确指向 `--proxy-creds`（`--creds` 是给 registry 的，不管用）。
+> 输出与 `--json` 里的代理地址一律打码（`http://alice:xxxxx@proxy.corp:3128`）。
+
+> **Windows 上"VPN 开着却连不上"的典型原因**：Clash / v2rayN 这类是**系统代理模式**，
+> 浏览器走 WinINET 所以正常，而 Go 程序只读环境变量、默认直连就被墙。`ldbg` 会自动读取
+> Windows 注册表里的系统代理来补上；若配的是 PAC 脚本则无法自动解析，按提示用 `--proxy`。
+> 排查：`Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' |
+> Select ProxyEnable, ProxyServer, AutoConfigURL`。
 
 ghcr.io 不通时换源（拉完仍以官方镜像名写出，集群侧步骤不变）：
 
@@ -301,6 +322,7 @@ ldbg down  [--stay-connected]        # 收尾 + 还原
 ldbg bundle                          # （有网机，无需 Docker）打包 traffic-manager 镜像
 ldbg bundle --platform linux/arm64   #   arm64 集群 → tel2-bundle-arm64.tar
 ldbg bundle --from <镜像源/路径>       #   ghcr.io 不通时换源拉取
+ldbg bundle --proxy http://127.0.0.1:7890   #   走代理（默认已自动识别 Windows 系统代理）
 ldbg cluster install --bundle ...    # （集群侧）离线安装 traffic-manager
 ldbg cluster probe --vlogs-addr <url> --kubeconfig <file>   # 验证隧道/代理桥接能承载什么
 ldbg cluster tunnel --bastion user@host                     # 打印 ssh -L 接入命令

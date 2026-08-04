@@ -2,13 +2,16 @@ package offline
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 // PullOpts tunes the native (daemon-free) pull.
@@ -19,6 +22,10 @@ type PullOpts struct {
 	Creds string
 	// Insecure allows a plain-HTTP / self-signed internal registry.
 	Insecure bool
+	// Proxy is the resolved proxy (see ResolveProxy). The zero value connects
+	// directly — note that means callers must resolve it, not rely on the
+	// library default, so a Windows system proxy is actually used.
+	Proxy Proxy
 }
 
 // NativePull pulls srcRef for the given platform straight from the registry and
@@ -36,7 +43,17 @@ func NativePull(ctx context.Context, srcRef, canonicalRef, platform, outPath str
 		return 0, fmt.Errorf("parse platform %q: %w", platform, err)
 	}
 
-	opts := []crane.Option{crane.WithContext(ctx), crane.WithPlatform(p)}
+	// Start from crane's tuned transport and override only what we must: the
+	// proxy (crane would otherwise consult the environment alone) and, for
+	// --insecure, the TLS config crane normally sets itself — passing a custom
+	// transport disables its own insecure handling.
+	tr := remote.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = o.Proxy.Fn
+	if o.Insecure {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in via --insecure
+	}
+
+	opts := []crane.Option{crane.WithContext(ctx), crane.WithPlatform(p), crane.WithTransport(tr)}
 	if o.Creds != "" {
 		user, pass, ok := strings.Cut(o.Creds, ":")
 		if !ok {

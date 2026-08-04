@@ -23,6 +23,8 @@ var (
 	bundleCreds     string
 	bundleInsecure  bool
 	bundleForcePull bool
+	bundleProxy     string
+	bundleProxyCred string
 )
 
 // bundleResult is the --json payload for `ldbg bundle`.
@@ -35,6 +37,8 @@ type bundleResult struct {
 	Pulled      bool   `json:"pulled"`
 	SkippedPull bool   `json:"skippedPull"`
 	SizeBytes   int64  `json:"sizeBytes"`
+	Proxy       string `json:"proxy,omitempty"`
+	ProxySource string `json:"proxySource,omitempty"`
 }
 
 var bundleCmd = &cobra.Command{
@@ -49,8 +53,15 @@ Engines (--engine):
   auto   (default) use the local docker when it already holds the image for the
          requested platform (no network at all), otherwise pull natively
   native pull straight from the registry — needs NO Docker or container tooling,
-         so this works on a fresh Windows 11 laptop; honours HTTPS_PROXY
+         so this works on a fresh Windows 11 laptop
   docker docker pull + docker save
+
+Proxies (native engine): --proxy wins, else HTTPS_PROXY/HTTP_PROXY, else the
+Windows system proxy (what a proxy-mode VPN client configures — Go does not read
+it on its own). The proxy actually in effect is printed with every pull, with the
+password redacted. Windows records only the proxy address, never its credentials,
+so an authenticated proxy needs --proxy-creds user:password (safer than embedding
+them in a URL, where a password containing '@' or '/' mis-parses).
 
 The bundle targets the CLUSTER's architecture, not this machine's: --platform
 defaults to linux/amd64. For an arm64 cluster run with --platform linux/arm64
@@ -89,11 +100,23 @@ name, so the air-gapped install steps do not change.`,
 		}
 
 		if engine == "native" {
-			out.Info("… pulling %s (%s) straight from the registry — no Docker needed", src, bundlePlatform)
-			size, perr := offline.NativePull(ctx, src, canonical, bundlePlatform, outPath,
-				offline.PullOpts{Creds: bundleCreds, Insecure: bundleInsecure})
+			// Resolve the proxy explicitly and say so: on Windows a proxy-mode VPN
+			// configures the system proxy, which Go's default transport ignores —
+			// the pull would silently go direct and time out with the VPN "on".
+			proxy, perr := offline.ResolveProxy(bundleProxy, bundleProxyCred)
 			if perr != nil {
-				return bundleFail(perr, src, engine, dockerOK)
+				return out.Failf("bundle", "--proxy wants http://host:port; --proxy-creds wants user:password", perr)
+			}
+			res.Proxy, res.ProxySource = proxy.URL, proxy.Source
+			if proxy.Note != "" {
+				out.Info("! %s", proxy.Note)
+			}
+			out.Info("… pulling %s (%s) straight from the registry — no Docker needed, %s",
+				src, bundlePlatform, proxy.Describe())
+			size, perr := offline.NativePull(ctx, src, canonical, bundlePlatform, outPath,
+				offline.PullOpts{Creds: bundleCreds, Insecure: bundleInsecure, Proxy: proxy})
+			if perr != nil {
+				return bundleFail(perr, src, engine, dockerOK, proxy)
 			}
 			res.Pulled, res.SizeBytes = true, size
 			if src != canonical {
@@ -122,7 +145,7 @@ name, so the air-gapped install steps do not change.`,
 		default:
 			out.Info("… docker pull --platform %s %s", bundlePlatform, src)
 			if perr := offline.DockerPull(ctx, src, bundlePlatform); perr != nil {
-				return bundleFail(perr, src, engine, dockerOK)
+				return bundleFail(perr, src, engine, dockerOK, offline.Proxy{})
 			}
 			if src != canonical {
 				if terr := offline.DockerTag(ctx, src, canonical); terr != nil {
@@ -135,7 +158,7 @@ name, so the air-gapped install steps do not change.`,
 
 		out.Info("… docker save → %s", outPath)
 		if serr := offline.DockerSave(ctx, canonical, outPath, bundlePlatform, caps); serr != nil {
-			return bundleFail(serr, src, engine, dockerOK)
+			return bundleFail(serr, src, engine, dockerOK, offline.Proxy{})
 		}
 		if fi, ferr := os.Stat(outPath); ferr == nil {
 			res.SizeBytes = fi.Size()
@@ -181,9 +204,15 @@ func resolveBundleEngine(ctx context.Context, image string, dockerOK bool, caps 
 // the docker daemon's.
 // It takes the *source* reference, not the canonical one: with --from it is the
 // mirror that was unreachable, and naming ghcr.io there would be a lie.
-func bundleFail(err error, src, engine string, dockerOK bool) error {
+func bundleFail(err error, src, engine string, dockerOK bool, proxy offline.Proxy) error {
 	kind := offline.Classify(err.Error())
 	hint := offline.HintFor(kind, src, bundlePlatform, engine, dockerOK)
+	// "my VPN is on but it times out" is usually ldbg going direct: say what was
+	// actually in effect before offering advice. Skipped only for a missing
+	// image/platform, where the proxy is irrelevant.
+	if engine == "native" && kind != offline.FailNotFound {
+		hint = "the pull ran with " + proxy.Describe() + "; " + hint
+	}
 	if kind == offline.FailDNS {
 		host := registryHost(src)
 		if diag, selfCheck := dnsDiagnosis(host); diag != "" {
@@ -247,6 +276,8 @@ func init() {
 	f.StringVar(&bundleEngine, "engine", "auto", "how to fetch the image: auto|native|docker (native needs no Docker)")
 	f.StringVar(&bundleCreds, "creds", "", "registry credentials as user:password (for a private mirror)")
 	f.BoolVar(&bundleInsecure, "insecure", false, "allow a plain-HTTP / self-signed registry (native engine)")
+	f.StringVar(&bundleProxy, "proxy", "", "proxy for the native engine, e.g. http://127.0.0.1:7890 (default: HTTPS_PROXY/HTTP_PROXY, then the Windows system proxy)")
+	f.StringVar(&bundleProxyCred, "proxy-creds", "", "credentials for that proxy as user:password (Windows never stores these, so an authenticated proxy needs them here)")
 	f.BoolVar(&bundleForcePull, "force-pull", false, "re-fetch even when the image is already in the local docker store")
 	f.BoolVar(&bundleNoPull, "no-pull", false, "skip the fetch and save the image already in the local docker store")
 	rootCmd.AddCommand(bundleCmd)

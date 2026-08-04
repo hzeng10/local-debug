@@ -32,6 +32,9 @@ func TestClassify(t *testing.T) {
 		{"native resolver timeout", `pull ghcr.io/telepresenceio/tel2:2.29.0 (linux/arm64): Get "https://ghcr.io/v2/": dial tcp: lookup ghcr.io: i/o timeout`, FailDNS},
 		{"no such host", `Get "https://harbor.corp/v2/": dial tcp: lookup harbor.corp: no such host`, FailDNS},
 		{"real auth failure", `GET https://ghcr.io/token...: UNAUTHORIZED: authentication required`, FailAuth},
+		// A 407 also says "authentication required", but it is the PROXY asking —
+		// pointing at --creds (registry credentials) would be the wrong advice.
+		{"proxy demands credentials", `Get "https://ghcr.io/v2/": proxyconnect tcp: 407 Proxy Authentication Required`, FailProxyAuth},
 		{"registry denied", `denied: requested access to the resource is denied`, FailAuth},
 		{"missing platform", `no child with platform linux/arm64 in index ghcr.io/telepresenceio/tel2:2.29.0`, FailNotFound},
 		{"missing tag", `Error response from daemon: manifest unknown`, FailNotFound},
@@ -90,6 +93,17 @@ func TestHintNeverSuggestsTheEngineInUse(t *testing.T) {
 	// Every unreachable-registry hint must name the mirror escape hatch.
 	if h := HintFor(FailNet, img, DefaultPlatform, "native", false); !strings.Contains(h, "--from") {
 		t.Errorf("net hint must offer --from: %q", h)
+	}
+}
+
+// A 407 must send the user to the proxy credentials, never the registry ones.
+func TestHintForProxyAuth(t *testing.T) {
+	h := HintFor(FailProxyAuth, ImageFor("2.29.0"), DefaultPlatform, "native", false)
+	if !strings.Contains(h, "--proxy-creds") {
+		t.Errorf("proxy-auth hint must point at --proxy-creds: %q", h)
+	}
+	if strings.Contains(h, "--creds user") {
+		t.Errorf("proxy-auth hint must not recommend registry credentials: %q", h)
 	}
 }
 

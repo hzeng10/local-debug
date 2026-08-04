@@ -186,13 +186,14 @@ func DockerSave(ctx context.Context, image, outPath, platform string, c Caps) er
 type FailKind string
 
 const (
-	FailDNS      FailKind = "dns"
-	FailNet      FailKind = "net"
-	FailAuth     FailKind = "auth"
-	FailNotFound FailKind = "notfound"
-	FailTLS      FailKind = "tls"
-	FailDaemon   FailKind = "daemon"
-	FailUnknown  FailKind = "unknown"
+	FailDNS       FailKind = "dns"
+	FailNet       FailKind = "net"
+	FailProxyAuth FailKind = "proxy-auth"
+	FailAuth      FailKind = "auth"
+	FailNotFound  FailKind = "notfound"
+	FailTLS       FailKind = "tls"
+	FailDaemon    FailKind = "daemon"
+	FailUnknown   FailKind = "unknown"
 )
 
 // Classify inspects a docker/registry error string.
@@ -208,6 +209,11 @@ func Classify(s string) FailKind {
 	switch {
 	case strings.Contains(l, "lookup ") && dnsSymptom:
 		return FailDNS
+	// Must precede FailAuth: a 407 also says "authentication required", but it is
+	// the proxy asking, not the registry — pointing at --creds would be wrong.
+	case strings.Contains(l, "proxy authentication required") || strings.Contains(l, "407 proxy") ||
+		strings.Contains(l, "statuscode=407") || strings.Contains(l, "status code 407"):
+		return FailProxyAuth
 	case strings.Contains(l, "cannot connect to the docker daemon") ||
 		strings.Contains(l, "is the docker daemon running") ||
 		strings.Contains(l, "executable file not found") ||
@@ -267,6 +273,8 @@ func HintFor(kind FailKind, image, platform, engine string, dockerPresent bool) 
 	case FailNet:
 		return fmt.Sprintf("%s resolved but the connection timed out or was refused — this machine has no route to it (blocked network? VPN off?). %s, or pull through a reachable mirror: --from <registry/path>%s. You can also build the bundle on a machine that can reach it and copy the tar over — the archive is all the air-gapped side needs",
 			registryOf(image), proxyHint(), altEngineHint(engine, dockerPresent))
+	case FailProxyAuth:
+		return "the PROXY rejected the request (407), not the registry — pass --proxy-creds user:password. Windows stores only the proxy address, never its credentials, so an authenticated proxy always needs them given explicitly (--creds is for the registry and will not help here)"
 	case FailAuth:
 		return "registry refused the credentials — for a private mirror pass --creds user:password (ghcr.io needs none for public images, so this usually means the anonymous token request itself failed: see DNS/proxy)"
 	case FailNotFound:

@@ -49,17 +49,30 @@ ldbg.exe bundle --tp-version 2.29.0 --platform linux/arm64   # → tel2-bundle-a
 **期望**：生成 `tel2-bundle.tar`（约 ~30MB+），输出形如
 `Bundled ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64, via native engine) → tel2-bundle.tar`。
 
-**打不动时**（国内网络 ghcr.io 常被墙、VPN 抖动会让 DNS 直接超时）：
+输出里会带上**实际生效的代理**，例如 `… no Docker needed, proxy http://127.0.0.1:7890 (Windows 系统代理)`
+或 `…, no proxy`——"VPN 开着却连不上"时先看这一行。
+
+**打不动时**（国内网络 ghcr.io 常被墙；VPN 抖动会让 DNS 直接超时）：
 
 ```powershell
-$env:HTTPS_PROXY = "http://<代理地址>:<端口>"        # 走公司代理
+# ① 先确认代理形态：Clash/v2rayN 这类是"系统代理模式"，Go 程序默认看不见
+#    （ldbg 会自动读注册表补上；配 PAC 时无法自动解析，需手工指定）
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' |
+  Select-Object ProxyEnable, ProxyServer, AutoConfigURL
+
+ldbg.exe bundle --proxy http://127.0.0.1:7890       # 显式指定（端口按上一步结果）
+ldbg.exe bundle --proxy http://proxy.corp:3128 --proxy-creds "alice:p@ss/w0rd"   # 代理要认证时
+#   注册表里只有代理地址、没有账号密码 → 认证型代理必须这样显式给；报 407 就是缺这个
+$env:HTTPS_PROXY = "http://<代理地址>:<端口>"        # 或走公司代理
 ldbg.exe bundle --from harbor.corp/mirror           # 或换内部镜像源（产物仍是官方镜像名）
 ldbg.exe bundle --from harbor.corp/mirror --creds user:pass --insecure   # 私有/自签名
 ldbg.exe bundle --no-pull                           # 本机 docker 里已有该镜像时，只打包
 ```
 
-> `ldbg bundle` 失败时会自己做一次 DNS 自检并指出到底是**本机 DNS/VPN 断了**还是
-> **docker 守护进程的 DNS/代理**有问题，按提示处理即可。
+> 失败时 `ldbg bundle` 会说明当时用的是哪个代理（或没有代理）；DNS 类失败还会自检一次，
+> 指出到底是**本机 DNS/VPN 断了**还是**docker 守护进程的 DNS/代理**有问题。
+> 注意 `--engine docker` 走的是 Docker 自己的代理设置（Docker Desktop → Settings →
+> Resources → Proxies），与 `--proxy`/环境变量无关。
 
 把 `tel2-bundle.tar` 拷贝到能访问气隙集群的运维机/跳板机。
 

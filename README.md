@@ -82,7 +82,7 @@ ldbg down                    # 退出拦截、还原 ambient、断开连接、�
 | `ldbg logs stats <expr>` | LogsQL 聚合统计（如按服务/级别计数——修复后错误数归零即机器可读的验收信号） |
 | `ldbg logs fields` / `values <字段>` | 字段/取值自省（agent 探索入口） |
 | `ldbg intercept` / `leave` | 底层的全量拦截控制 |
-| `ldbg bundle` | （联网机器）把 traffic-manager 镜像打成传输 tar 包。**无需 Docker**（默认直连 registry 拉取），`--platform` 选 amd64/arm64，`--from` 走镜像源 |
+| `ldbg bundle` | （联网机器）把 traffic-manager 镜像打成传输 tar 包。**无需 Docker**（默认直连 registry 拉取，自动识别 Windows 系统代理），`--platform` 选 amd64/arm64，`--from` 走镜像源 |
 | `ldbg cluster install` | （气隙）导入镜像 + 用内嵌 chart 安装 traffic-manager |
 | `ldbg cluster probe` | **验证经隧道/代理的集群桥接能否用**：分级检查 api / rbac / port-forward / 日志库，逐项 pass/fail + 提示 |
 | `ldbg cluster tunnel` / `kubeconfig` | 为「kubectl 只在跳板机」的场景打印 `ssh -L` 接入命令 / 生成指向本地代理的最小 kubeconfig |
@@ -111,8 +111,23 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via registry --registry <
 ```
 
 `ldbg bundle` **不需要本机装 Docker**：默认 `--engine auto` 会直接跟 registry 说话把镜像拉下来
-并写成 docker-archive（Windows 11 全新机器可直接用；`HTTPS_PROXY` 生效）。本机已装 Docker
-且镜像已在本地时，则直接 `docker save`（不联网、最快）。**一个包只装一个架构**。
+并写成 docker-archive（Windows 11 全新机器可直接用）。本机已装 Docker 且镜像已在本地时，
+则直接 `docker save`（不联网、最快）。**一个包只装一个架构**。
+
+**代理 / VPN**：优先级 `--proxy` > `HTTPS_PROXY`/`HTTP_PROXY` > **Windows 系统代理** > 直连，
+每次拉取都会打印实际生效的那一个（密码打码）。特别注意：Clash / v2rayN 这类**系统代理模式**
+的 VPN，浏览器能用但 Go 程序默认看不见（Go 只读环境变量）——`ldbg` 会自动去读 Windows 注册表
+里的系统代理设置补上这个缺口；配置的是 PAC 脚本时无法自动解析，按提示用 `--proxy` 指定。
+
+```bash
+ldbg bundle --proxy http://127.0.0.1:7890
+ldbg bundle --proxy http://proxy.corp:3128 --proxy-creds 'alice:p@ss/w0rd'   # 需要认证的代理
+```
+
+> **Windows 注册表里只有代理地址、没有账号密码**（凭证在凭据管理器里，取不到），所以认证型代理
+> 必须用 `--proxy-creds user:password` 显式给出。用它而不是把凭证塞进 URL：密码里含
+> `@` `/` `:` 时手写 URL 会被解析错（主机名都会变）。代理报 **407** 时提示会直接指向
+> `--proxy-creds`（`--creds` 是给 registry 的，不解决 407）。
 
 ghcr.io 被墙/不稳时换源（拉完仍以官方镜像名写出，集群侧步骤完全不变）：
 
