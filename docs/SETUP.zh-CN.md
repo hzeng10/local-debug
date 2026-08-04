@@ -181,6 +181,28 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube
 traffic-manager）、`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--sudo=false`、
 `--skip-present`（已有则跳过，重跑幂等）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
 
+### 4.1 节点用密码登录 / 由 AI agent 调用
+
+**OpenSSH 只从 `/dev/tty` 读密码**，而 AI agent 调用命令时没有终端——所以走系统 `ssh`
+时密码根本没法输入，只会失败或卡住。ldbg 为此内置了自己的 SSH 传输层：
+
+```bash
+export LDBG_SSH_PASSWORD='节点密码'          # Windows: $env:LDBG_SSH_PASSWORD="..."
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root
+```
+
+- 设了这个环境变量，`--ssh-transport auto`（默认）就**自动切到原生传输**，每个节点
+  **只认证一次**（不再是每条命令问一次），Windows 上也能完全无人值守。
+- **密码只从环境变量读，没有命令行参数**——写进 argv 会出现在 `ps`、shell 历史和 CI 日志里。
+- 其它开关：`--ssh-port`、`--ssh-key`（原生传输用私钥；加密私钥请用 ssh-agent）、
+  `--ssh-strict-host-key`（要求节点已在 `~/.ssh/known_hosts`）。
+- host key 策略：已在 `known_hosts` 且**对不上 → 直接拒绝**；不在里面 → 打印指纹后本次接受
+  （气隙集群的节点通常不在笔记本的 known_hosts 里），要严格就加 `--ssh-strict-host-key`。
+
+**非交互时自动快速失败**：检测到没有终端，系统传输会自动带上
+`-o BatchMode=yes -o ConnectTimeout=<--ssh-timeout，默认 10>`，
+连不通的节点几秒内报错而不是挂两分钟（实测 2m16s → 5s）。要人工输密码就加 `--interactive`。
+
 验证：
 ```bash
 kubectl -n ambassador get deploy traffic-manager      # READY 1/1

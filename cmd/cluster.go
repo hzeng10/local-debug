@@ -30,14 +30,20 @@ var (
 	clusterPreflightVia string
 
 	// SSH import
-	clusterSSHUser     string
-	clusterNodes       []string
-	clusterSSHOpts     string
-	clusterSudo        bool
-	clusterRemoteTmp   string
-	clusterImportCmd   string
-	clusterKeepRemote  bool
-	clusterSkipPresent bool
+	clusterSSHUser        string
+	clusterNodes          []string
+	clusterSSHOpts        string
+	clusterSudo           bool
+	clusterRemoteTmp      string
+	clusterImportCmd      string
+	clusterKeepRemote     bool
+	clusterSkipPresent    bool
+	clusterSSHTransport   string
+	clusterSSHPort        int
+	clusterSSHKey         string
+	clusterStrictHostKey  bool
+	clusterConnectTimeout int
+	clusterInteractive    bool
 
 	// registry push
 	clusterEngine     string
@@ -323,6 +329,12 @@ func init() {
 	insF.StringVar(&clusterImportCmd, "import-cmd", "", "override the node's load command (%s = archive path) for unusual runtimes")
 	insF.BoolVar(&clusterKeepRemote, "keep-remote", false, "keep the transferred archive on the nodes")
 	insF.BoolVar(&clusterSkipPresent, "skip-present", false, "leave nodes that already have the image untouched")
+	insF.StringVar(&clusterSSHTransport, "ssh-transport", "auto", "auto|system|native — 'native' speaks SSH from inside ldbg so LDBG_SSH_PASSWORD works without a TTY")
+	insF.IntVar(&clusterSSHPort, "ssh-port", 22, "node SSH port (native transport; the system transport takes -p via --ssh-opts)")
+	insF.StringVar(&clusterSSHKey, "ssh-key", "", "private key file for the native transport")
+	insF.BoolVar(&clusterStrictHostKey, "ssh-strict-host-key", false, "native transport: require the node in ~/.ssh/known_hosts")
+	insF.IntVar(&clusterConnectTimeout, "ssh-timeout", 10, "seconds to wait for a node's SSH connection")
+	insF.BoolVar(&clusterInteractive, "interactive", false, "allow ssh to prompt (default: off without a terminal, so an agent gets an error instead of a hang)")
 	// registry push
 	insF.StringVar(&clusterEngine, "engine", "auto", "registry push engine: auto|native|docker (native needs no Docker)")
 	insF.StringVar(&clusterCreds, "creds", "", "registry credentials as user:password")

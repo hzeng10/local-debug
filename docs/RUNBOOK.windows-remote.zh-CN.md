@@ -155,6 +155,23 @@ ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root `
 > 其它开关：`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--import-only`（只送镜像不装）、
 > `--skip-present`（已有则跳过）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
 
+**节点用密码登录（Windows 上尤其常见）**——Windows 自带的 OpenSSH 既不支持连接复用
+（ControlMaster），密码又只能从终端输入，所以让 ClaudeCode 之类的 AI agent 去跑必然卡住。
+用 ldbg 内置的 SSH 传输层：
+
+```powershell
+$env:LDBG_SSH_PASSWORD = "节点密码"     # 只从环境变量读，没有命令行参数（避免进 ps/日志）
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root
+#   端口非 22： --ssh-port 2222 ；用私钥： --ssh-key <path>
+```
+
+> 设了这个环境变量就自动切到原生传输（`--ssh-transport auto` 的默认行为），**每个节点只认证
+> 一次**，无人值守可用。host key：已记录且对不上 → 直接拒绝；没记录 → 打印指纹后本次接受，
+> 要严格就加 `--ssh-strict-host-key`。
+>
+> 没有终端时（agent 调用）系统传输会自动加 `BatchMode=yes` 与 `ConnectTimeout`，
+> 连不通的节点几秒内报错而不是挂两分钟；要人工输密码就加 `--interactive`。
+
 **验证**：
 ```powershell
 kubectl -n ambassador get deploy traffic-manager

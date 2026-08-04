@@ -117,6 +117,17 @@ cri-o → `podman load`，导入后逐节点校验并清理临时文件。仓库
 默认覆盖**所有可调度节点**（注入的 traffic-agent 与 manager 同镜像，会跟着工作负载到任意节点），
 未全覆盖会警告（`--json` 的 `fullyCovered`）。
 
+**节点用密码登录 / 交给 AI agent 跑**：OpenSSH 只从 `/dev/tty` 读密码，而 agent 没有终端，
+所以 `ldbg` 内置了自己的 SSH 传输层——设 `LDBG_SSH_PASSWORD` 环境变量即自动启用，
+每个节点只认证一次、无人值守可用（**密码只走环境变量，没有命令行参数**）：
+
+```bash
+export LDBG_SSH_PASSWORD='节点密码'      # Windows: $env:LDBG_SSH_PASSWORD="..."
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root
+```
+
+没有终端时还会自动加 `BatchMode=yes` 与 `ConnectTimeout`，连不通的节点**几秒内报错而不是挂住**。
+
 `ldbg bundle` **不需要本机装 Docker**：默认 `--engine auto` 会直接跟 registry 说话把镜像拉下来
 并写成 docker-archive（Windows 11 全新机器可直接用）。本机已装 Docker 且镜像已在本地时，
 则直接 `docker save`（不联网、最快）。**一个包只装一个架构**。

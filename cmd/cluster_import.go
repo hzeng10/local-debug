@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
 	"github.com/hzeng10/local-debug/internal/offline"
+	"golang.org/x/term"
 )
 
 // importOutcome is what an import method reports back to `cluster install`.
@@ -79,6 +82,18 @@ func importViaSSH(ctx context.Context, image string) (importOutcome, error) {
 		SkipPresent: clusterSkipPresent,
 		KeepRemote:  clusterKeepRemote,
 		DryRun:      clusterDryRun,
+
+		Transport:      clusterSSHTransport,
+		Port:           clusterSSHPort,
+		KeyFile:        clusterSSHKey,
+		StrictHostKey:  clusterStrictHostKey,
+		ConnectTimeout: time.Duration(clusterConnectTimeout) * time.Second,
+		// Prompting is only possible with a terminal; an agent has none, so
+		// default to failing fast instead of blocking on an unanswerable prompt.
+		Interactive: clusterInteractive || stdinIsTerminal(),
+	}
+	if o.UseNative() {
+		out.Info("… using ldbg's own SSH transport (%s is set or --ssh-transport native)", offline.PasswordEnv)
 	}
 
 	res := importOutcome{Via: "ssh"}
@@ -289,3 +304,9 @@ func renderNodes(rs []offline.NodeResult) string {
 	}
 	return b.String()
 }
+
+// stdinIsTerminal reports whether a human could answer an ssh prompt. It must be
+// a real terminal check: /dev/null is a character device too, so testing
+// os.ModeCharDevice would call an agent's redirected stdin "interactive" and put
+// the SSH path back to hanging on prompts nobody can answer.
+func stdinIsTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
