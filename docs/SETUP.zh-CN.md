@@ -137,6 +137,10 @@ kubectl -n ambassador get deploy traffic-manager \
 ## 5. 日常调试流程（每次，"只在笔记本上启动并调试"）
 
 > 一次性设置（§3、§4）完成后，每个会话只剩三步：连接一次 → `ldbg up` → 在 IDE 里调试。
+>
+> **完整分步操作**（Linux / Windows 双平台并列、逐步期望输出、`gde-adapter` 实例、
+> Claude Code 驱动方式）见 [`GUIDE.debug-service.zh-CN.md`](GUIDE.debug-service.zh-CN.md)。
+> 本节是精简版。
 
 ### 5.1 连接集群（每个会话一次，需要提权）
 ```bash

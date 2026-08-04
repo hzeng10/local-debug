@@ -3,6 +3,10 @@
 > 把下面分隔线之间的内容拷贝到你的 Spring Boot 服务仓库的 `CLAUDE.md`（或追加到已有
 > 文件），并替换 `<service>` / `<namespace>` / 构建命令。任意会话中的 ClaudeCode 读到它
 > 即可即插即用地跑通「接管 → 复现 → 查日志 → 改代码 → 验证 → 收尾」闭环。
+>
+> 已把占位符全部填好的完整示例（服务 `gde-adapter` / 命名空间 `kube-system`），连同
+> `.claude/settings.json` 权限白名单与 `--json` 输出契约，见
+> [`GUIDE.debug-service.zh-CN.md` §8](GUIDE.debug-service.zh-CN.md#8-让-claude-code-驱动这套流程)。
 
 ---
 

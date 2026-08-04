@@ -4,6 +4,9 @@
 > 集群**，复跑并验证 `ldbg`（Telepresence 全量拦截）方案。前置：该方案已在 Ubuntu + minikube
 > 上验证通过（见 [`SETUP.zh-CN.md`](SETUP.zh-CN.md)）。本文是「真实环境复验」的逐步清单，
 > 每个阶段都给出**命令 + 期望输出 + 检查点（✅/❌）**，并附回滚步骤。
+>
+> **本文是验收门，不是日常使用手册。** 环境跑通之后的日常调试操作（Linux / Windows 双平台、
+> 完整实例、Claude Code 驱动）见 [`GUIDE.debug-service.zh-CN.md`](GUIDE.debug-service.zh-CN.md)。
 
 ---
 
@@ -302,6 +305,10 @@ kubectl -n <ns> get pod -l <selector>     # 期望 1/1（无 traffic-agent），
 
 目标：在**服务仓库**里配置好 ClaudeCode，让它无需人工带路即可跑通
 「接管 → 复现 → 查日志 → 改代码 → 验证 → 收尾」闭环；开发者只负责 IDE 断点。
+
+> 本阶段只写 Windows 侧的**安装**与配置。Linux 版配置、已填好实参的 `CLAUDE.md` /
+> `.claude/settings.json`、`--json` 输出契约与代理版命令序列，见
+> [`GUIDE.debug-service.zh-CN.md` §8](GUIDE.debug-service.zh-CN.md#8-让-claude-code-驱动这套流程)。
 
 ### H.1 安装 ClaudeCode（Windows 11）
 

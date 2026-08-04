@@ -11,7 +11,9 @@
 **global/TCP 全量拦截** = 完全接管），并补充了 Spring Boot 配置同步、**Istio ambient 处理**、
 **离线（气隙）安装**路径，以及面向 AI 代理的全量 `--json` 输出。
 
-> 配套中文文档：搭建与使用 [`docs/SETUP.zh-CN.md`](docs/SETUP.zh-CN.md)；
+> 配套中文文档：**开发者分步指南**（Linux/Windows 双平台，含完整实例与 Claude Code 用法）
+> [`docs/GUIDE.debug-service.zh-CN.md`](docs/GUIDE.debug-service.zh-CN.md)；
+> 搭建与离线安装 [`docs/SETUP.zh-CN.md`](docs/SETUP.zh-CN.md)；
 > Windows 11 → 远程气隙集群验证 Runbook [`docs/RUNBOOK.windows-remote.zh-CN.md`](docs/RUNBOOK.windows-remote.zh-CN.md)。
 
 ## 工作原理
@@ -61,6 +63,9 @@ ldbg down                    # 退出拦截、还原 ambient、断开连接、�
 ```
 
 ## 命令
+
+> 逐步操作（含 Linux/Windows 双平台命令、期望输出与排查）见
+> [`docs/GUIDE.debug-service.zh-CN.md`](docs/GUIDE.debug-service.zh-CN.md)。
 
 | 命令 | 作用 |
 | --- | --- |
