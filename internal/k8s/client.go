@@ -67,25 +67,6 @@ func (c *Client) Ping(ctx context.Context) (string, error) {
 	return v.GitVersion, nil
 }
 
-// NodeArchitectures counts the cluster nodes by CPU architecture ("amd64" → 3).
-// It tells `ldbg bundle` which --platform to build for, so an amd64 laptop doesn't
-// silently produce an image the cluster cannot exec. Listing nodes is often denied
-// to developer credentials, so callers should treat an error as "unknown" rather
-// than a failure.
-func (c *Client) NodeArchitectures(ctx context.Context) (map[string]int, error) {
-	nl, err := c.cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	archs := map[string]int{}
-	for i := range nl.Items {
-		if a := nl.Items[i].Status.NodeInfo.Architecture; a != "" {
-			archs[a]++
-		}
-	}
-	return archs, nil
-}
-
 // ProbeReadPods lists at most one pod in ns to confirm the current credentials
 // have namespaced read RBAC — a representative check for what ldbg actually reads
 // (pods, services, workloads). It returns the number of pods in the capped list.

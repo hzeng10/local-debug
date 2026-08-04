@@ -39,40 +39,80 @@
 
 ## 阶段 A — 在「有网机器」上打包镜像（一次性）
 
-```powershell
-# 不需要装 Docker —— ldbg 默认直连 registry 拉取并写出 docker-archive
-ldbg.exe bundle --tp-version 2.29.0
+> 前提：把下载的 `ldbg-windows-amd64.exe` 改名为 `ldbg.exe`，放到当前目录或 `PATH`。
+> **不需要装 Docker** —— `ldbg` 默认直连 registry 拉取并写出 docker-archive。
 
-# arm64 集群（先用 ldbg cluster preflight 看 node architectures 再决定）
-ldbg.exe bundle --tp-version 2.29.0 --platform linux/arm64   # → tel2-bundle-arm64.tar
+### A.1 主命令（Windows 11 + VPN，先直接跑这个）
+
+```powershell
+# 在你想生成 tar 包的目录里执行
+ldbg.exe bundle --tp-version 2.29.0 --platform linux/amd64
 ```
-**期望**：生成 `tel2-bundle.tar`（约 ~30MB+），输出形如
-`Bundled ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64, via native engine) → tel2-bundle.tar`。
 
-输出里会带上**实际生效的代理**，例如 `… no Docker needed, proxy http://127.0.0.1:7890 (Windows 系统代理)`
-或 `…, no proxy`——"VPN 开着却连不上"时先看这一行。
+不用加 `--engine native`（没装 Docker 时会自动选它），也不用手工设代理
+（会自动读取 Windows 系统代理）。
 
-**打不动时**（国内网络 ghcr.io 常被墙；VPN 抖动会让 DNS 直接超时）：
+**期望输出**（重点看第一行末尾那段——它告诉你代理到底用没用上）：
+
+```
+… pulling ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64) straight from the registry — no Docker needed, proxy http://127.0.0.1:7890 (Windows system proxy)
+Bundled ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64, via native engine) → tel2-bundle.tar (28.0 MB)
+Carry it to the air-gapped env, then: ldbg cluster install --bundle tel2-bundle.tar
+```
+
+### A.2 按那一行的内容决定下一步
+
+| 你看到的 | 含义 | 怎么办 |
+|---|---|---|
+| `proxy … (Windows system proxy)` + 成功 | 自动识别生效 | 什么都不用做 |
+| `no proxy` + **成功** | 你的 VPN 是 TUN 模式，本来就不需要代理 | 什么都不用做 |
+| `no proxy` + 连接超时 | 代理软件没写系统代理，或配的是 PAC | 用 A.3 的 ① 或 ② |
+| 报 **407** / 提示 `--proxy-creds` | 代理要认证（注册表里没有凭证） | 用 A.3 的 ③ |
+| DNS 类报错 | 本机 DNS/VPN 断了（提示里会自检并说明） | 恢复 VPN/DNS 后重试 |
+
+先确认代理形态（Clash / v2rayN 这类是"系统代理模式"，端口从这里看）：
 
 ```powershell
-# ① 先确认代理形态：Clash/v2rayN 这类是"系统代理模式"，Go 程序默认看不见
-#    （ldbg 会自动读注册表补上；配 PAC 时无法自动解析，需手工指定）
 Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' |
   Select-Object ProxyEnable, ProxyServer, AutoConfigURL
-
-ldbg.exe bundle --proxy http://127.0.0.1:7890       # 显式指定（端口按上一步结果）
-ldbg.exe bundle --proxy http://proxy.corp:3128 --proxy-creds "alice:p@ss/w0rd"   # 代理要认证时
-#   注册表里只有代理地址、没有账号密码 → 认证型代理必须这样显式给；报 407 就是缺这个
-$env:HTTPS_PROXY = "http://<代理地址>:<端口>"        # 或走公司代理
-ldbg.exe bundle --from harbor.corp/mirror           # 或换内部镜像源（产物仍是官方镜像名）
-ldbg.exe bundle --from harbor.corp/mirror --creds user:pass --insecure   # 私有/自签名
-ldbg.exe bundle --no-pull                           # 本机 docker 里已有该镜像时，只打包
 ```
 
-> 失败时 `ldbg bundle` 会说明当时用的是哪个代理（或没有代理）；DNS 类失败还会自检一次，
-> 指出到底是**本机 DNS/VPN 断了**还是**docker 守护进程的 DNS/代理**有问题。
-> 注意 `--engine docker` 走的是 Docker 自己的代理设置（Docker Desktop → Settings →
-> Resources → Proxies），与 `--proxy`/环境变量无关。
+### A.3 变体
+
+```powershell
+# ① 手工指定代理（端口按 A.2 的结果；Clash 常见 7890，v2rayN 常见 10809）
+ldbg.exe bundle --tp-version 2.29.0 --proxy http://127.0.0.1:7890
+
+# ② 用环境变量（对当前 PowerShell 窗口生效）
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:HTTP_PROXY  = "http://127.0.0.1:7890"
+ldbg.exe bundle --tp-version 2.29.0
+
+# ③ 代理需要账号密码（密码含 @ / : 等特殊字符也没问题，别写进 URL）
+ldbg.exe bundle --tp-version 2.29.0 --proxy http://proxy.corp:3128 --proxy-creds "alice:p@ss/w0rd"
+
+# ④ 集群是 arm64：先确认架构，再打对应的包
+ldbg.exe cluster preflight                                    # 看 node architectures
+ldbg.exe bundle --tp-version 2.29.0 --platform linux/arm64    # → tel2-bundle-arm64.tar
+
+# ⑤ 代理也走不通时换镜像源（产物仍是官方镜像名，集群侧步骤不变）
+ldbg.exe bundle --tp-version 2.29.0 --from harbor.corp/mirror --creds user:pass
+ldbg.exe bundle --tp-version 2.29.0 --from harbor.corp/mirror --creds user:pass --insecure  # 自签名证书
+
+# ⑥ 本机 docker 里已经有该镜像时，只打包、不联网
+ldbg.exe bundle --tp-version 2.29.0 --no-pull
+```
+
+> 排障时看 `ldbg.exe bundle --json` 的 `proxy` / `proxySource` 两个字段（密码已打码，可放心贴出）。
+> 注意 `--engine docker` 走的是 Docker 自己的代理设置（Docker Desktop → Settings → Resources →
+> Proxies），与 `--proxy` / 环境变量无关。
+
+### A.4 确认产物并送出
+
+```powershell
+Get-Item tel2-bundle.tar | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
+# 期望：tel2-bundle.tar 约 28 MB
+```
 
 把 `tel2-bundle.tar` 拷贝到能访问气隙集群的运维机/跳板机。
 
@@ -86,19 +126,34 @@ ldbg.exe bundle --no-pull                           # 本机 docker 里已有该
 在运维机上（已带 `tel2-bundle.tar`、`telepresence`、`ldbg`、指向集群的 kubeconfig）：
 
 ```powershell
-# 1) 预检
-ldbg.exe cluster preflight --import-via registry --registry <内部仓库/路径>
+# 1) 预检：逐节点列出运行时 / 架构 / IP，并给出该走哪条导入路径
+ldbg.exe cluster preflight
+#   nodes (3):
+#     cp-1    containerd  amd64  10.0.0.1
+#     w-1     containerd  amd64  10.0.0.2
+#     w-2     docker      amd64  10.0.0.3
 
-# 2) 导入镜像 + 用内嵌 chart 安装（pullPolicy=IfNotPresent，集群不触网）
-ldbg.exe cluster install --bundle tel2-bundle.tar `
-  --import-via registry --registry <内部仓库/路径>
+# 2a) 有内部镜像仓库（多节点首选）—— 无需本机 Docker
+ldbg.exe cluster install --bundle tel2-bundle.tar --registry <内部仓库/路径>
+#     私有/自签名：  --creds user:pass --insecure
+
+# 2b) 没有仓库：SSH 逐节点导入。**先 dry-run 看清楚要在节点上执行什么**
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --dry-run
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root `
+  --ssh-opts "-i $env:USERPROFILE\.ssh\id_rsa -o StrictHostKeyChecking=no"
 ```
 
-> 导入方式按你的集群选择：
-> - **`registry`**（最常见）：`ldbg` 把镜像 `docker tag` 到 `<内部仓库/路径>/tel2:2.29.0`
->   并 `docker push`；安装时 `images.registry` 指向该仓库。
-> - **`ctr`**（containerd 节点、无内部仓库）：把 tar `scp` 到**每个节点**，逐节点执行
->   `sudo ctr -n k8s.io images import tel2-bundle.tar`，再用 `--no-import` 跑安装。
+> **节点运行时不用你指定**：`ldbg` 从集群的 `containerRuntimeVersion` 读出来，按节点自动选
+> containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动改用 `k3s ctr`）、
+> docker → `docker load`、cri-o → `podman load`，导入后**逐节点校验**并清理节点上的临时 tar。
+>
+> **默认导入到所有可调度节点**：注入的 traffic-agent 和 traffic-manager 是同一个镜像，会跟着
+> 被拦截的工作负载调度到任意节点；少导一个节点，拦截时那个 Pod 就 ImagePullBackOff。未全覆盖
+> 时会明确警告（`--json` 里 `fullyCovered: false`）。
+>
+> 前提：SSH 可达 + 节点上**免密 sudo**（否则加 `--sudo=false`，前提是登录用户本身有权限）。
+> 其它开关：`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--import-only`（只送镜像不装）、
+> `--skip-present`（已有则跳过）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
 
 **验证**：
 ```powershell

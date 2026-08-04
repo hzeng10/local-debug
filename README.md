@@ -83,7 +83,7 @@ ldbg down                    # 退出拦截、还原 ambient、断开连接、�
 | `ldbg logs fields` / `values <字段>` | 字段/取值自省（agent 探索入口） |
 | `ldbg intercept` / `leave` | 底层的全量拦截控制 |
 | `ldbg bundle` | （联网机器）把 traffic-manager 镜像打成传输 tar 包。**无需 Docker**（默认直连 registry 拉取，自动识别 Windows 系统代理），`--platform` 选 amd64/arm64，`--from` 走镜像源 |
-| `ldbg cluster install` | （气隙）导入镜像 + 用内嵌 chart 安装 traffic-manager |
+| `ldbg cluster install` | （气隙）把镜像送进集群 + 用内嵌 chart 安装 traffic-manager。**按节点运行时自动选加载命令**（containerd/docker/cri-o），支持内部仓库推送或 SSH 逐节点导入，`--dry-run` 可先审 |
 | `ldbg cluster probe` | **验证经隧道/代理的集群桥接能否用**：分级检查 api / rbac / port-forward / 日志库，逐项 pass/fail + 提示 |
 | `ldbg cluster tunnel` / `kubeconfig` | 为「kubectl 只在跳板机」的场景打印 `ssh -L` 接入命令 / 生成指向本地代理的最小 kubeconfig |
 | `ldbg cluster fetch-kubeconfig` | **经 SSH 从集群节点拉取 kubeconfig** 并改写为走 `ssh -L` 隧道（保留 TLS 校验）——笔记本由此获得**完整能力**（含 `ldbg up` 全量拦截） |
@@ -106,9 +106,16 @@ ldbg bundle --tp-version 2.29.0
 ldbg bundle --platform linux/arm64          # → tel2-bundle-arm64.tar（自动区分文件名）
 
 # 2) 在气隙环境内（导入镜像 → 内嵌 chart 安装，pullPolicy=IfNotPresent）
-ldbg cluster install --bundle tel2-bundle.tar --import-via registry --registry <内部仓库/路径>
-#   minikube/kind/k3d 则用：  --import-via minikube
+ldbg cluster install --bundle tel2-bundle.tar --registry <内部仓库/路径>   # 有仓库：所有节点从仓库拉
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root --dry-run   # 没仓库：SSH 逐节点，先看命令
+ldbg cluster install --bundle tel2-bundle.tar --import-via minikube       # 单节点开发集群
 ```
+
+**节点运行时不用指定**：`ldbg` 从集群的 `containerRuntimeVersion` 读出来，按节点自动选
+containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动用 `k3s ctr`）、docker → `docker load`、
+cri-o → `podman load`，导入后逐节点校验并清理临时文件。仓库推送同样**无需本机 Docker**。
+默认覆盖**所有可调度节点**（注入的 traffic-agent 与 manager 同镜像，会跟着工作负载到任意节点），
+未全覆盖会警告（`--json` 的 `fullyCovered`）。
 
 `ldbg bundle` **不需要本机装 Docker**：默认 `--engine auto` 会直接跟 registry 说话把镜像拉下来
 并写成 docker-archive（Windows 11 全新机器可直接用）。本机已装 Docker 且镜像已在本地时，
@@ -128,6 +135,10 @@ ldbg bundle --proxy http://proxy.corp:3128 --proxy-creds 'alice:p@ss/w0rd'   # �
 > 必须用 `--proxy-creds user:password` 显式给出。用它而不是把凭证塞进 URL：密码里含
 > `@` `/` `:` 时手写 URL 会被解析错（主机名都会变）。代理报 **407** 时提示会直接指向
 > `--proxy-creds`（`--creds` 是给 registry 的，不解决 407）。
+>
+> **Windows 11 + VPN 的完整命令示例**（含期望输出、"看哪一行判断代理有没有生效"的对照表，
+> 以及手工指定代理 / 认证代理 / arm64 / 换源等变体）见
+> [`docs/RUNBOOK.windows-remote.zh-CN.md` 阶段 A](docs/RUNBOOK.windows-remote.zh-CN.md#阶段-a--在有网机器上打包镜像一次性)。
 
 ghcr.io 被墙/不稳时换源（拉完仍以官方镜像名写出，集群侧步骤完全不变）：
 

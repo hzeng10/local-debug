@@ -140,24 +140,46 @@ traffic-manager 版本一致。
 正确的 kubeconfig）：
 
 ```bash
-# 0) 预检
-ldbg cluster preflight --import-via <registry|minikube|kind|k3d|ctr>
+# 0) 预检：逐节点列出运行时 / 架构 / IP，并给出该走哪条导入路径
+ldbg cluster preflight
+#   nodes (3):
+#     cp-1    containerd  amd64  10.0.0.1
+#     w-1     containerd  amd64  10.0.0.2
+#     w-2     docker      amd64  10.0.0.3
 
-# 1) 一步：导入镜像 + 用内嵌 chart 安装 traffic-manager（pullPolicy=IfNotPresent）
-#    —— 内部镜像仓库方式（最常见）：
-ldbg cluster install --bundle tel2-bundle.tar --import-via registry \
-  --registry <你的内部仓库/路径>
+# 1a) 有内部镜像仓库（多节点首选：所有节点都从仓库拉）
+ldbg cluster install --bundle tel2-bundle.tar --registry <你的内部仓库/路径>
+#     私有/自签名仓库：  --creds user:pass --insecure
 
-#    —— 或单节点 minikube：
+# 1b) 没有仓库：SSH 逐节点导入（先 --dry-run 看清楚要在节点上跑什么）
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root --dry-run
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root \
+  --ssh-opts "-i ~/.ssh/id_rsa"
+
+# 1c) 单节点开发集群
 ldbg cluster install --bundle tel2-bundle.tar --import-via minikube
 ```
 
+`--import-via` 默认 `auto`：给了 `--registry` 走仓库，给了 `--ssh-user`/`--nodes` 走 SSH，
+认出 minikube/kind/k3d 就用它们自己的 load；都不满足时**直接停下来问**，不猜。
+
 `ldbg cluster install` 实际执行：
-1. 把镜像导入集群（内部仓库推送，或 `minikube/kind/k3d image load`；containerd 节点用
-   `ctr -n k8s.io images import` 逐节点导入）。
+1. 把镜像送进集群。**节点运行时是从集群读出来的**（`containerRuntimeVersion`），
+   所以 SSH 路径会按节点自动选择正确的加载命令：
+   containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动改用 `k3s ctr`；`k8s.io`
+   这个命名空间不能错，否则加载"成功"但 kubelet 看不到）、docker → `docker load`、
+   cri-o → `podman load`；随后**逐节点校验**镜像确实可见，并清理节点上的临时 tar。
 2. `telepresence helm install`（chart 内嵌、**无需联网**），并设置
    `images.agentImage`、必要时 `images.registry`，以及 `images.pullPolicy=IfNotPresent`，
-   确保集群只用已侧载的镜像、**绝不访问外网**。
+   确保集群只用已侧载的镜像、**绝不访问外网**。已安装过则自动改为 `helm upgrade`。
+
+> **为什么默认导入到所有节点**：注入的 traffic-agent 与 traffic-manager 是**同一个镜像**，
+> 会跟着被拦截的工作负载调度到任意节点。少导一个节点，拦截时那个 Pod 就会 ImagePullBackOff。
+> 未全覆盖时 `ldbg` 会明确警告，`--json` 里是 `fullyCovered: false`。
+
+常用开关：`--dry-run`（只打印每个节点要执行的命令）、`--import-only`（只送镜像、不装
+traffic-manager）、`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--sudo=false`、
+`--skip-present`（已有则跳过，重跑幂等）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
 
 验证：
 ```bash
