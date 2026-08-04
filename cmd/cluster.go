@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/hzeng10/local-debug/internal/offline"
 	"github.com/hzeng10/local-debug/internal/tp"
@@ -23,6 +25,15 @@ var (
 	clusterNoImport   bool
 )
 
+// clusterPreflightResult is the --json payload for `ldbg cluster preflight`.
+type clusterPreflightResult struct {
+	KubernetesVersion string         `json:"kubernetesVersion"`
+	Image             string         `json:"image"`
+	ImportVia         string         `json:"importVia"`
+	NodeArchitectures map[string]int `json:"nodeArchitectures,omitempty"`
+	BundlePlatform    string         `json:"bundlePlatform,omitempty"`
+}
+
 var clusterPreflightCmd = &cobra.Command{
 	Use:   "preflight",
 	Short: "Check the cluster is ready for an offline traffic-manager install",
@@ -36,14 +47,63 @@ var clusterPreflightCmd = &cobra.Command{
 		if err != nil {
 			return out.Failf("cluster preflight", "", err)
 		}
-		image := offline.ImageFor(clusterVersion)
-		human := fmt.Sprintf("cluster reachable: kubernetes %s\ntarget image: %s\nimport via: %s\n→ run: ldbg cluster install --bundle <tar> --import-via %s",
-			v, image, clusterImportVia, clusterImportVia)
-		out.Result("cluster preflight", human, map[string]string{
-			"kubernetesVersion": v, "image": image, "importVia": clusterImportVia,
-		})
+		res := clusterPreflightResult{
+			KubernetesVersion: v, Image: offline.ImageFor(clusterVersion), ImportVia: clusterImportVia,
+		}
+		// Node architecture decides which --platform `ldbg bundle` must target.
+		// Listing nodes is frequently denied to developer credentials — degrade.
+		archs, aerr := cl.NodeArchitectures(ctx)
+		if aerr == nil {
+			res.NodeArchitectures = archs
+			res.BundlePlatform = dominantPlatform(archs)
+		}
+		out.Result("cluster preflight", renderPreflight(res, aerr), res)
 		return nil
 	},
+}
+
+// dominantPlatform turns the node arch census into the platform to bundle for
+// (the most common one); empty when the census is empty.
+func dominantPlatform(archs map[string]int) string {
+	best, bestN := "", 0
+	for a, n := range archs {
+		if n > bestN || (n == bestN && a < best) {
+			best, bestN = a, n
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return "linux/" + best
+}
+
+func renderPreflight(r clusterPreflightResult, archErr error) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "cluster reachable: kubernetes %s\n", r.KubernetesVersion)
+	switch {
+	case archErr != nil:
+		fmt.Fprintf(&b, "node architectures: unknown (%v) — pass --platform to 'ldbg bundle' yourself\n", archErr)
+	case len(r.NodeArchitectures) > 0:
+		names := make([]string, 0, len(r.NodeArchitectures))
+		for a := range r.NodeArchitectures {
+			names = append(names, a)
+		}
+		sort.Strings(names)
+		parts := make([]string, 0, len(names))
+		for _, a := range names {
+			parts = append(parts, fmt.Sprintf("%s×%d", a, r.NodeArchitectures[a]))
+		}
+		fmt.Fprintf(&b, "node architectures: %s\n", strings.Join(parts, ", "))
+	}
+	fmt.Fprintf(&b, "target image: %s\nimport via: %s\n", r.Image, r.ImportVia)
+	if r.BundlePlatform != "" {
+		fmt.Fprintf(&b, "→ bundle:  ldbg bundle --platform %s\n", r.BundlePlatform)
+		if len(r.NodeArchitectures) > 1 {
+			b.WriteString("   (mixed-architecture cluster: one bundle per arch — run bundle once for each)\n")
+		}
+	}
+	fmt.Fprintf(&b, "→ install: ldbg cluster install --bundle <tar> --import-via %s", r.ImportVia)
+	return b.String()
 }
 
 type clusterInstallResult struct {

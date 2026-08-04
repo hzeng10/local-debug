@@ -60,11 +60,25 @@
 traffic-manager 与注入的 traffic-agent **是同一个镜像**：`ghcr.io/telepresenceio/tel2:<版本>`。
 
 ```bash
-# 用 ldbg 一步完成：docker pull + docker save
-ldbg bundle --tp-version 2.29.0 --out tel2-bundle.tar
-# 等价于：
-#   docker pull ghcr.io/telepresenceio/tel2:2.29.0
-#   docker save ghcr.io/telepresenceio/tel2:2.29.0 -o tel2-bundle.tar
+# 0) 先确认集群节点架构（决定打哪个包；连不上集群时跳过，按运维给的架构来）
+ldbg cluster preflight              # → node architectures: amd64×3 / arm64×2 …
+
+# 1) 打包（默认 linux/amd64）
+ldbg bundle --tp-version 2.29.0                  # → tel2-bundle.tar
+ldbg bundle --tp-version 2.29.0 --platform linux/arm64   # → tel2-bundle-arm64.tar
+```
+
+**不需要本机装 Docker**：`ldbg bundle` 默认（`--engine auto`）直接与 registry 通信把镜像拉下来，
+写成与 `docker save` 同格式的 docker-archive —— Windows 11 全新机器、没装 Docker 也能用，
+`HTTPS_PROXY` / `HTTP_PROXY` 环境变量生效。若本机已装 Docker 且镜像已在本地，则直接
+`docker save`（不联网）。**一个 tar 只装一个架构**，两种架构就跑两次。
+
+ghcr.io 不通时换源（拉完仍以官方镜像名写出，集群侧步骤不变）：
+
+```bash
+ldbg bundle --from harbor.corp/mirror                                # 内部仓库 / 国内镜像源
+ldbg bundle --from harbor.corp/mirror --creds user:pass --insecure   # 私有 / 自签名证书
+ldbg bundle --no-pull                                                # 镜像已在本地 docker 中
 ```
 
 把 `tel2-bundle.tar` 拷贝到能访问集群的跳板机 / 运维机。
@@ -284,7 +298,9 @@ ldbg up     <service> -n <ns>        # 同步 + 连接 + ambient 豁免 + 全量
 ldbg status [--json]                 # 连接 / 拦截状态
 ldbg test                            # 经集群路径验证落到本地
 ldbg down  [--stay-connected]        # 收尾 + 还原
-ldbg bundle --out tel2-bundle.tar    # （有网机）打包 traffic-manager 镜像
+ldbg bundle                          # （有网机，无需 Docker）打包 traffic-manager 镜像
+ldbg bundle --platform linux/arm64   #   arm64 集群 → tel2-bundle-arm64.tar
+ldbg bundle --from <镜像源/路径>       #   ghcr.io 不通时换源拉取
 ldbg cluster install --bundle ...    # （集群侧）离线安装 traffic-manager
 ldbg cluster probe --vlogs-addr <url> --kubeconfig <file>   # 验证隧道/代理桥接能承载什么
 ldbg cluster tunnel --bastion user@host                     # 打印 ssh -L 接入命令

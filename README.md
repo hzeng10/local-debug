@@ -82,7 +82,7 @@ ldbg down                    # 退出拦截、还原 ambient、断开连接、�
 | `ldbg logs stats <expr>` | LogsQL 聚合统计（如按服务/级别计数——修复后错误数归零即机器可读的验收信号） |
 | `ldbg logs fields` / `values <字段>` | 字段/取值自省（agent 探索入口） |
 | `ldbg intercept` / `leave` | 底层的全量拦截控制 |
-| `ldbg bundle` | （联网机器）`docker save` traffic-manager 镜像为 tar 包 |
+| `ldbg bundle` | （联网机器）把 traffic-manager 镜像打成传输 tar 包。**无需 Docker**（默认直连 registry 拉取），`--platform` 选 amd64/arm64，`--from` 走镜像源 |
 | `ldbg cluster install` | （气隙）导入镜像 + 用内嵌 chart 安装 traffic-manager |
 | `ldbg cluster probe` | **验证经隧道/代理的集群桥接能否用**：分级检查 api / rbac / port-forward / 日志库，逐项 pass/fail + 提示 |
 | `ldbg cluster tunnel` / `kubeconfig` | 为「kubectl 只在跳板机」的场景打印 `ssh -L` 接入命令 / 生成指向本地代理的最小 kubeconfig |
@@ -98,12 +98,28 @@ traffic-manager 与注入的 traffic-agent 是**同一个镜像**：`ghcr.io/tel
 Helm chart 已内嵌在 Telepresence 客户端中（无需联网，也无需 `helm` 二进制）。
 
 ```bash
-# 在联网机器上
-ldbg bundle --tp-version 2.29.0 --out tel2-bundle.tar
+# 0) 先看集群节点是什么架构（决定要打哪个包）
+ldbg cluster preflight            # 输出 node architectures: amd64×3 → bundle 建议
 
-# 在气隙环境内（导入镜像 → 内嵌 chart 安装，pullPolicy=IfNotPresent）
+# 1) 在联网机器上打包（默认 linux/amd64；arm64 集群用 --platform linux/arm64）
+ldbg bundle --tp-version 2.29.0
+ldbg bundle --platform linux/arm64          # → tel2-bundle-arm64.tar（自动区分文件名）
+
+# 2) 在气隙环境内（导入镜像 → 内嵌 chart 安装，pullPolicy=IfNotPresent）
 ldbg cluster install --bundle tel2-bundle.tar --import-via registry --registry <内部仓库/路径>
 #   minikube/kind/k3d 则用：  --import-via minikube
+```
+
+`ldbg bundle` **不需要本机装 Docker**：默认 `--engine auto` 会直接跟 registry 说话把镜像拉下来
+并写成 docker-archive（Windows 11 全新机器可直接用；`HTTPS_PROXY` 生效）。本机已装 Docker
+且镜像已在本地时，则直接 `docker save`（不联网、最快）。**一个包只装一个架构**。
+
+ghcr.io 被墙/不稳时换源（拉完仍以官方镜像名写出，集群侧步骤完全不变）：
+
+```bash
+ldbg bundle --from harbor.corp/mirror                      # 内部仓库/国内镜像源
+ldbg bundle --from harbor.corp/mirror --creds user:pass --insecure   # 私有 / 自签名
+ldbg bundle --no-pull                                      # 镜像已在本地 docker 中，只打包
 ```
 
 ## 远程接入：kubectl 只在跳板机（Windows 11 笔记本无法直连集群 API）
@@ -213,6 +229,10 @@ envelope 约定：`{ok, command, data, error, hint}`；`data.truncated=true` 时
 
 构建只需联网拉取一次 Go module 依赖（`go.sum` 已锁定，`go build` 会自动下载到本地模块缓存）。
 之后即可离线构建。本仓库无 CGO 依赖，故无需 C 编译器。
+
+> 依赖：`spf13/cobra`、`k8s.io/client-go`，以及 `google/go-containerregistry`（**固定 v0.20.2** ——
+> `ldbg bundle` 用它直连 registry 拉镜像，从而不依赖 Docker；更高版本要求 Go 1.23/1.25，会顶掉
+> 本仓库的 Go 1.22 基线，**升级前请确认 go 指令兼容**）。Go 版本要求不变，仍是 1.22+。
 
 ```bash
 git clone https://github.com/hzeng10/local-debug.git

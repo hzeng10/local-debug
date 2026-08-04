@@ -40,15 +40,31 @@
 ## 阶段 A — 在「有网机器」上打包镜像（一次性）
 
 ```powershell
-# 需要 docker
-ldbg.exe bundle --tp-version 2.29.0 --out tel2-bundle.tar
+# 不需要装 Docker —— ldbg 默认直连 registry 拉取并写出 docker-archive
+ldbg.exe bundle --tp-version 2.29.0
+
+# arm64 集群（先用 ldbg cluster preflight 看 node architectures 再决定）
+ldbg.exe bundle --tp-version 2.29.0 --platform linux/arm64   # → tel2-bundle-arm64.tar
 ```
-**期望**：生成 `tel2-bundle.tar`（约 ~30MB+）。等价于
-`docker pull ghcr.io/telepresenceio/tel2:2.29.0` + `docker save ... -o tel2-bundle.tar`。
+**期望**：生成 `tel2-bundle.tar`（约 ~30MB+），输出形如
+`Bundled ghcr.io/telepresenceio/tel2:2.29.0 (linux/amd64, via native engine) → tel2-bundle.tar`。
+
+**打不动时**（国内网络 ghcr.io 常被墙、VPN 抖动会让 DNS 直接超时）：
+
+```powershell
+$env:HTTPS_PROXY = "http://<代理地址>:<端口>"        # 走公司代理
+ldbg.exe bundle --from harbor.corp/mirror           # 或换内部镜像源（产物仍是官方镜像名）
+ldbg.exe bundle --from harbor.corp/mirror --creds user:pass --insecure   # 私有/自签名
+ldbg.exe bundle --no-pull                           # 本机 docker 里已有该镜像时，只打包
+```
+
+> `ldbg bundle` 失败时会自己做一次 DNS 自检并指出到底是**本机 DNS/VPN 断了**还是
+> **docker 守护进程的 DNS/代理**有问题，按提示处理即可。
 
 把 `tel2-bundle.tar` 拷贝到能访问气隙集群的运维机/跳板机。
 
-- ✅ **检查点 A**：`tel2-bundle.tar` 已生成并送达运维机。
+- ✅ **检查点 A**：`tel2-bundle.tar` 已生成并送达运维机；架构与集群节点一致
+  （`ldbg cluster preflight` 的 `node architectures`）。
 
 ---
 
@@ -620,7 +636,10 @@ spec: { selector: { app: orders }, ports: [{ name: http, port: 8080, targetPort:
 
 ```powershell
 # 一次性（安装/部署）
-ldbg.exe bundle --out tel2-bundle.tar                                   # 有网机
+ldbg.exe cluster preflight                                              # 看 node architectures
+ldbg.exe bundle                                                         # 有网机，无需 Docker
+#   arm64 集群： ldbg.exe bundle --platform linux/arm64
+#   换源：       ldbg.exe bundle --from <镜像源/路径> [--creds u:p] [--insecure]
 ldbg.exe cluster install --bundle tel2-bundle.tar --import-via registry --registry <repo>  # 集群侧
 #   日志栈（可选）：见阶段 G；ClaudeCode 配置（可选）：见阶段 H
 #   （服务仓库放 CLAUDE.md + .claude/settings.json 权限）
