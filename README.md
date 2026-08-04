@@ -15,6 +15,10 @@
 > [`docs/GUIDE.debug-service.zh-CN.md`](docs/GUIDE.debug-service.zh-CN.md)；
 > 搭建与离线安装 [`docs/SETUP.zh-CN.md`](docs/SETUP.zh-CN.md)；
 > Windows 11 → 远程气隙集群验证 Runbook [`docs/RUNBOOK.windows-remote.zh-CN.md`](docs/RUNBOOK.windows-remote.zh-CN.md)。
+>
+> 面向接手开发者与 AI 代理的两份底稿：**需求规格**（逐条编号 + 验收标准 + 完整命令契约）
+> [`docs/SPEC.zh-CN.md`](docs/SPEC.zh-CN.md)；**设计文档**（架构、模块划分、关键决策与踩坑记录）
+> [`docs/DESIGN.zh-CN.md`](docs/DESIGN.zh-CN.md)。
 
 ## 工作原理
 
