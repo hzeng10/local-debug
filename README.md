@@ -119,7 +119,9 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube       # 单�
 containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动用 `k3s ctr`）、docker → `docker load`、
 cri-o → `podman load`，导入后逐节点校验并清理临时文件。仓库推送同样**无需本机 Docker**。
 默认覆盖**所有可调度节点**（注入的 traffic-agent 与 manager 同镜像，会跟着工作负载到任意节点），
-未全覆盖会警告（`--json` 的 `fullyCovered`）。
+未全覆盖会警告（`--json` 的 `fullyCovered`）。定制化 PaaS 集群 kubelet 上报不标准、
+运行时显示 unknown 时：加 `--runtime docker|containerd|cri-o` 强制指定，
+或什么都不加——`ldbg` 会 SSH 到节点上探测实际引擎（结果标注 `docker (probed)`）。
 
 **节点用密码登录 / 交给 AI agent 跑**：OpenSSH 只从 `/dev/tty` 读密码，而 agent 没有终端，
 所以 `ldbg` 内置了自己的 SSH 传输层——设 `LDBG_SSH_PASSWORD` 环境变量即自动启用，

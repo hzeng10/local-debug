@@ -153,7 +153,40 @@ ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root `
 >
 > 前提：SSH 可达 + 节点上**免密 sudo**（否则加 `--sudo=false`，前提是登录用户本身有权限）。
 > 其它开关：`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--import-only`（只送镜像不装）、
-> `--skip-present`（已有则跳过）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
+> `--skip-present`（已有则跳过）、`--runtime docker|containerd|cri-o`（强制指定运行时，
+> 见下面的故障条目）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
+
+**故障：`unknown container runtime` / `unrecognized runtime`**。真实报错示例：
+
+```text
+… paas-172-25-71-121 (172.25.71.121, unknown): transferring and importing
+  ✗ paas-172-25-71-121: unknown container runtime — pass --import-cmd with the load command for this node
+error: no node received the image
+```
+
+根因：`ldbg` 从 kubelet 上报的 `node.status.nodeInfo.containerRuntimeVersion` 判断每个节点用
+什么命令导入镜像，标准形式是 `docker://29.2.1`、`containerd://1.7.13`、`cri-o://1.28.2`。
+**定制化 PaaS 发行版（改名的 docker 分支、iSulad 等）常上报非标准字符串**，此时 `ldbg`
+认不出运行时。诊断：`ldbg cluster preflight` 会在节点表格下方指出哪个节点上报了什么原文；
+或者直接看 kubelet 上报的字段：
+
+```powershell
+kubectl get nodes -o custom-columns=NAME:.metadata.name,RUNTIME:.status.nodeInfo.containerRuntimeVersion
+```
+
+三个出口（按优先级）：
+
+```powershell
+# 出口 1（首选）：你知道节点实际是什么运行时，直接强制指定 —— 保留逐节点校验
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --runtime docker
+
+# 出口 2（零参数兜底）：什么都不加，ldbg 会 SSH 到节点上按
+#   docker → ctr → k3s ctr → nerdctl → podman → isula 的顺序探测实际安装的引擎，
+#   用命中的引擎导入并校验，结果里标注 "docker (probed)"。仍建议之后用 --runtime 固定。
+
+# 出口 3（逃生口）：运行时特殊到 ldbg 不认识的命令，整条导入命令自己给（%s = tar 路径）
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --import-cmd "docker load -i %s"
+```
 
 **节点用密码登录（Windows 上尤其常见）**——Windows 自带的 OpenSSH 既不支持连接复用
 （ControlMaster），密码又只能从终端输入，所以让 ClaudeCode 之类的 AI agent 去跑必然卡住。

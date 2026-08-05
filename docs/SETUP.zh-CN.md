@@ -169,6 +169,10 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube
    containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动改用 `k3s ctr`；`k8s.io`
    这个命名空间不能错，否则加载"成功"但 kubelet 看不到）、docker → `docker load`、
    cri-o → `podman load`；随后**逐节点校验**镜像确实可见，并清理节点上的临时 tar。
+   若 kubelet 上报的运行时字符串不是标准形式（定制化 PaaS 发行版常见），`ldbg` 会
+   **SSH 到节点上探测**实际安装的引擎（探测顺序 docker → ctr → k3s ctr → nerdctl →
+   podman → isula），用命中的引擎导入并校验，结果标注为如 `docker (probed)`；
+   也可以用 `--runtime docker|containerd|cri-o` 对所有节点强制指定，跳过探测。
 2. `telepresence helm install`（chart 内嵌、**无需联网**），并设置
    `images.agentImage`、必要时 `images.registry`，以及 `images.pullPolicy=IfNotPresent`，
    确保集群只用已侧载的镜像、**绝不访问外网**。已安装过则自动改为 `helm upgrade`。
@@ -179,7 +183,8 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube
 
 常用开关：`--dry-run`（只打印每个节点要执行的命令）、`--import-only`（只送镜像、不装
 traffic-manager）、`--nodes user@ip1,user@ip2`（手工指定/取子集）、`--sudo=false`、
-`--skip-present`（已有则跳过，重跑幂等）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
+`--skip-present`（已有则跳过，重跑幂等）、`--runtime docker|containerd|cri-o`（kubelet
+上报不标准时强制指定运行时）、`--import-cmd "<命令> %s"`（运行时特殊时兜底）。
 
 ### 4.1 节点用密码登录 / 由 AI agent 调用
 

@@ -89,6 +89,47 @@ func TestVerifyCmd(t *testing.T) {
 	}
 }
 
+// AutoScript is what runs when the kubelet reports a runtime ldbg does not
+// recognize: it probes the node for its actual engine. docker must be probed
+// FIRST — an unrecognized report almost always comes from a renamed docker
+// fork, and on a node that carries both docker and a docker-managed containerd,
+// probing containerd first would load the image where the kubelet never looks.
+func TestAutoScript(t *testing.T) {
+	s := AutoScript("/tmp/tel2.tar", "ghcr.io/telepresenceio/tel2:2.29.0", true, false, false)
+
+	docker := strings.Index(s, "command -v docker")
+	ctr := strings.Index(s, "command -v ctr")
+	if docker < 0 || ctr < 0 || docker > ctr {
+		t.Errorf("docker must be probed before containerd: %q", s)
+	}
+	for _, want := range []string{
+		"sudo docker load -i", "sudo docker image inspect", // engine + its own verify
+		"-n k8s.io", "k3s", "nerdctl", "podman", "isula", // containerd namespace trap + all engines
+		`rm -f "/tmp/tel2.tar"`,             // clean-up still happens
+		"ldbg-status i=$i v=$v rt=$rt s=$s", // extended marker reports the engine found
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("probe script must contain %q: %q", want, s)
+		}
+	}
+	// The whole probe is ONE remote command (one connection, like remoteScript).
+	if strings.Contains(s, "\n") {
+		t.Errorf("probe script must be a single line: %q", s)
+	}
+
+	// --sudo=false and --keep-remote must both be honoured.
+	s = AutoScript("/tmp/tel2.tar", "img:1", false, false, true)
+	if strings.Contains(s, "sudo") || strings.Contains(s, "rm -f") {
+		t.Errorf("sudo/rm must be absent: %q", s)
+	}
+
+	// --skip-present folds into the script: verify first, only load on a miss.
+	s = AutoScript("/tmp/tel2.tar", "img:1", true, true, false)
+	if !strings.Contains(s, "then s=1; i=0; v=0; else") {
+		t.Errorf("skip-present must check before loading: %q", s)
+	}
+}
+
 func TestSSHTargetAndRemotePath(t *testing.T) {
 	if got := sshTarget("10.0.0.1", "root"); got != "root@10.0.0.1" {
 		t.Errorf("sshTarget = %q", got)

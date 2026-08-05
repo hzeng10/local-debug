@@ -99,9 +99,9 @@ func importViaSSH(ctx context.Context, image string) (importOutcome, error) {
 	res := importOutcome{Via: "ssh"}
 	for _, t := range targets {
 		if clusterDryRun {
-			out.Info("• %s (%s, %s)", t.Name, t.Address, t.Runtime)
+			out.Info("• %s (%s, %s)", t.Name, t.Address, runtimeLabel(t))
 		} else {
-			out.Info("… %s (%s, %s): transferring and importing", t.Name, t.Address, t.Runtime)
+			out.Info("… %s (%s, %s): transferring and importing", t.Name, t.Address, runtimeLabel(t))
 		}
 		r := offline.TransferAndImport(ctx, t, clusterBundle, image, o)
 		if clusterDryRun {
@@ -126,7 +126,27 @@ func nodeState(r offline.NodeResult) string {
 	if r.Skipped {
 		return r.Node + ": already present"
 	}
+	if strings.HasSuffix(r.Runtime, "(probed)") {
+		return fmt.Sprintf("%s: imported and verified (engine probed on the node: %s)", r.Node, strings.TrimSuffix(r.Runtime, " (probed)"))
+	}
 	return r.Node + ": imported and verified"
+}
+
+// runtimeLabel names the runtime for the progress line; for one the kubelet
+// reports in an unrecognized form it shows the kubelet's own words and what
+// ldbg will do about it.
+func runtimeLabel(t offline.Target) string {
+	if t.Runtime != offline.RuntimeUnknown {
+		return string(t.Runtime)
+	}
+	switch {
+	case clusterImportCmd != "":
+		return "runtime unknown — using --import-cmd"
+	case t.RuntimeRaw != "":
+		return fmt.Sprintf("unrecognized runtime %q — probing the node", t.RuntimeRaw)
+	default:
+		return "runtime not reported — probing the node"
+	}
 }
 
 func anyOK(rs []offline.NodeResult) bool {
@@ -163,6 +183,10 @@ func coversAll(done []offline.NodeResult, all []k8s.NodeInfo) bool {
 // node list so the caller can report coverage. --nodes overrides discovery but
 // still borrows the runtime from the cluster when the node can be matched.
 func sshTargets(ctx context.Context) ([]offline.Target, []k8s.NodeInfo, error) {
+	forced, err := forcedRuntime()
+	if err != nil {
+		return nil, nil, err
+	}
 	var all []k8s.NodeInfo
 	if cl, err := newK8sClient(); err == nil {
 		all, _ = cl.Nodes(ctx) // optional: --nodes works without list-nodes RBAC
@@ -179,11 +203,17 @@ func sshTargets(ctx context.Context) ([]offline.Target, []k8s.NodeInfo, error) {
 			if _, h, ok := strings.Cut(spec, "@"); ok {
 				host = h
 			}
-			t := offline.Target{Name: host, Address: spec, Runtime: offline.RuntimeUnknown}
+			t := offline.Target{Name: host, Address: spec, Runtime: forced}
 			if n := matchNode(all, host); n != nil {
-				t.Name, t.Runtime = n.Name, offline.RuntimeOf(n.Runtime)
-			} else if clusterImportCmd == "" {
-				return nil, nil, fmt.Errorf("node %q is not in the cluster's node list, so its container runtime is unknown — pass --import-cmd with the load command for it", host)
+				t.Name, t.RuntimeRaw = n.Name, rawRuntime(*n)
+				if forced == offline.RuntimeUnknown {
+					t.Runtime = offline.RuntimeOf(n.Runtime)
+				}
+			} else if clusterImportCmd == "" && forced == offline.RuntimeUnknown {
+				// A host outside the cluster's node list may simply be a typo, so
+				// probing it (and loading an image into the wrong machine) is not
+				// an acceptable default — demand an explicit runtime instead.
+				return nil, nil, fmt.Errorf("node %q is not in the cluster's node list, so its container runtime is unknown — pass --runtime docker|containerd|cri-o (or --import-cmd) for it", host)
 			}
 			targets = append(targets, t)
 		}
@@ -208,8 +238,12 @@ func sshTargets(ctx context.Context) ([]offline.Target, []k8s.NodeInfo, error) {
 		case n.InternalIP == "":
 			skipped = append(skipped, n.Name+" (no InternalIP)")
 		default:
+			rt := offline.RuntimeOf(n.Runtime)
+			if forced != offline.RuntimeUnknown {
+				rt = forced
+			}
 			targets = append(targets, offline.Target{
-				Name: n.Name, Address: n.InternalIP, Runtime: offline.RuntimeOf(n.Runtime),
+				Name: n.Name, Address: n.InternalIP, Runtime: rt, RuntimeRaw: rawRuntime(n),
 			})
 		}
 	}
@@ -221,6 +255,34 @@ func sshTargets(ctx context.Context) ([]offline.Target, []k8s.NodeInfo, error) {
 		return nil, nil, fmt.Errorf("no schedulable node with an InternalIP to import into")
 	}
 	return targets, all, nil
+}
+
+// forcedRuntime validates --runtime. An unrecognized value is a hard error
+// rather than a silent fall-through to probing: the flag exists to REMOVE
+// guessing, so a typo must not quietly reintroduce it.
+func forcedRuntime() (offline.Runtime, error) {
+	v := strings.TrimSpace(clusterRuntime)
+	if v == "" {
+		return offline.RuntimeUnknown, nil
+	}
+	rt := offline.RuntimeOf(v)
+	if rt == offline.RuntimeUnknown {
+		return rt, fmt.Errorf("--runtime %q is not one of docker|containerd|cri-o", v)
+	}
+	return rt, nil
+}
+
+// rawRuntime reconstructs the kubelet's containerRuntimeVersion report, so an
+// unrecognized runtime can be shown as what the kubelet actually said.
+func rawRuntime(n k8s.NodeInfo) string {
+	switch {
+	case n.Runtime == "":
+		return n.RuntimeVersion
+	case n.RuntimeVersion == "":
+		return n.Runtime
+	default:
+		return n.Runtime + "://" + n.RuntimeVersion
+	}
 }
 
 func matchNode(all []k8s.NodeInfo, host string) *k8s.NodeInfo {

@@ -90,6 +90,65 @@ func VerifyCmd(rt Runtime, image string, sudo bool) (string, error) {
 	}
 }
 
+// AutoScript is the fallback for a runtime the kubelet reports in a form ldbg
+// does not recognize — customized PaaS distributions do exactly that. The node
+// is reachable over SSH anyway, so instead of giving up, probe which engine is
+// actually installed and import + verify with that one, still in a single
+// connection. The winning engine travels back as rt=<name> in the status
+// marker, and s=1 marks a skip-present hit. docker is probed first: an
+// unrecognized report almost always comes from a renamed docker fork, while
+// standalone containerd and cri-o report schemes the normal path already
+// understands.
+func AutoScript(remoteTar, image string, sudo, skipPresent, keepRemote bool) string {
+	pre := sudoPrefix(sudo)
+	if pre != "" {
+		pre += " "
+	}
+	branches := []struct{ cli, rt, load, verify string }{
+		{"docker", "docker",
+			fmt.Sprintf("%sdocker load -i %q", pre, remoteTar),
+			fmt.Sprintf("%sdocker image inspect %q >/dev/null 2>&1", pre, image)},
+		{"ctr", "containerd",
+			fmt.Sprintf("%sctr -n %s images import %q", pre, containerdNamespace, remoteTar),
+			fmt.Sprintf("%sctr -n %s images ls -q | grep -qF %q", pre, containerdNamespace, image)},
+		{"k3s", "containerd",
+			fmt.Sprintf("%sk3s ctr -n %s images import %q", pre, containerdNamespace, remoteTar),
+			fmt.Sprintf("%sk3s ctr -n %s images ls -q | grep -qF %q", pre, containerdNamespace, image)},
+		{"nerdctl", "containerd",
+			fmt.Sprintf("%snerdctl -n %s load -i %q", pre, containerdNamespace, remoteTar),
+			fmt.Sprintf("%snerdctl -n %s image inspect %q >/dev/null 2>&1", pre, containerdNamespace, image)},
+		{"podman", "cri-o",
+			fmt.Sprintf("%spodman load -i %q", pre, remoteTar),
+			fmt.Sprintf("%spodman image exists %q", pre, image)},
+		{"isula", "isulad",
+			fmt.Sprintf("%sisula load -i %q", pre, remoteTar),
+			fmt.Sprintf("%sisula inspect %q >/dev/null 2>&1", pre, image)},
+	}
+	var b strings.Builder
+	b.WriteString("rt=none; i=127; v=1; s=0; ")
+	for n, br := range branches {
+		kw := "elif"
+		if n == 0 {
+			kw = "if"
+		}
+		fmt.Fprintf(&b, "%s command -v %s >/dev/null 2>&1; then rt=%s; ", kw, br.cli, br.rt)
+		if skipPresent {
+			fmt.Fprintf(&b, "if %s; then s=1; i=0; v=0; else ", br.verify)
+		}
+		fmt.Fprintf(&b, "%s; i=$?; if [ $i -eq 0 ]; then %s; v=$?; fi", br.load, br.verify)
+		if skipPresent {
+			b.WriteString("; fi")
+		}
+		b.WriteString("; ")
+	}
+	b.WriteString("fi; ")
+	if !keepRemote {
+		fmt.Fprintf(&b, "rm -f %q; ", remoteTar)
+	}
+	b.WriteString(`echo "ldbg-status i=$i v=$v rt=$rt s=$s"; if [ $i -ne 0 ]; then exit $i; fi; exit $v`)
+	return b.String()
+}
+
 func sudoPrefix(sudo bool) string {
 	if sudo {
 		return "sudo"

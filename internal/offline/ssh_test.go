@@ -1,6 +1,7 @@
 package offline
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -33,19 +34,66 @@ func TestRemoteScriptIsOneRoundTrip(t *testing.T) {
 
 func TestParseStatus(t *testing.T) {
 	cases := []struct {
-		out                        string
-		imported, verified, parsed bool
+		out  string
+		want remoteStatus
 	}{
-		{"ldbg-status i=0 v=0", true, true, true},
-		{"some load output\nldbg-status i=0 v=1\n", true, false, true},
-		{"ldbg-status i=127 v=0", false, true, true},
-		{"no marker here", false, false, false},
+		{"ldbg-status i=0 v=0", remoteStatus{parsed: true, imported: true, verified: true}},
+		{"some load output\nldbg-status i=0 v=1\n", remoteStatus{parsed: true, imported: true}},
+		{"ldbg-status i=127 v=0", remoteStatus{parsed: true, verified: true}},
+		{"no marker here", remoteStatus{}},
+		// The probing script's extended marker names the engine it found and
+		// whether skip-present hit.
+		{"ldbg-status i=0 v=0 rt=docker s=0", remoteStatus{parsed: true, imported: true, verified: true, runtime: "docker"}},
+		{"ldbg-status i=0 v=0 rt=containerd s=1", remoteStatus{parsed: true, imported: true, verified: true, runtime: "containerd", skipped: true}},
+		{"ldbg-status i=127 v=1 rt=none s=0", remoteStatus{parsed: true, runtime: "none"}},
 	}
 	for _, c := range cases {
-		i, v, p := parseStatus(c.out)
-		if i != c.imported || v != c.verified || p != c.parsed {
-			t.Errorf("parseStatus(%q) = (%v,%v,%v), want (%v,%v,%v)", c.out, i, v, p, c.imported, c.verified, c.parsed)
+		if got := parseStatus(c.out); got != c.want {
+			t.Errorf("parseStatus(%q) = %+v, want %+v", c.out, got, c.want)
 		}
+	}
+}
+
+// The error tail must show the runtime's own message, not ldbg's marker line —
+// the marker is always the LAST line, so without stripping it every import
+// failure would read "import failed on the node: ldbg-status i=1 v=0".
+func TestWithoutMarker(t *testing.T) {
+	out := "open /tmp/t.tar: no such file\nldbg-status i=1 v=0"
+	if got := tail(withoutMarker(out)); got != ": open /tmp/t.tar: no such file" {
+		t.Errorf("tail(withoutMarker) = %q", got)
+	}
+}
+
+// An unknown runtime used to be an immediate refusal. That stranded exactly the
+// clusters this tool exists for: reachable over SSH, docker-only, but with a
+// kubelet that reports the runtime in a nonstandard form. Now it probes.
+func TestUnknownRuntimeFallsBackToProbing(t *testing.T) {
+	t.Setenv(PasswordEnv, "")
+	r := TransferAndImport(context.Background(),
+		Target{Name: "n1", Address: "root@10.0.0.1", Runtime: RuntimeUnknown, RuntimeRaw: "weird://1.0"},
+		"/tmp/t.tar", "img:1", SSHOpts{DryRun: true, Sudo: true})
+	if r.Error != "" {
+		t.Fatalf("unknown runtime must probe, not fail: %q", r.Error)
+	}
+	joined := strings.Join(r.Commands, "\n")
+	for _, want := range []string{"command -v docker", "command -v isula", "rt=$rt"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("dry-run must show the probe script (missing %q): %q", want, joined)
+		}
+	}
+	// A known runtime keeps the direct, non-probing script.
+	r = TransferAndImport(context.Background(),
+		Target{Name: "n1", Address: "root@10.0.0.1", Runtime: RuntimeDocker},
+		"/tmp/t.tar", "img:1", SSHOpts{DryRun: true, Sudo: true})
+	if joined := strings.Join(r.Commands, "\n"); strings.Contains(joined, "command -v docker") {
+		t.Errorf("a known runtime must not probe: %q", joined)
+	}
+	// --import-cmd still overrides everything, probing included.
+	r = TransferAndImport(context.Background(),
+		Target{Name: "n1", Address: "root@10.0.0.1", Runtime: RuntimeUnknown},
+		"/tmp/t.tar", "img:1", SSHOpts{DryRun: true, ImportCmd: "my-loader %s"})
+	if joined := strings.Join(r.Commands, "\n"); strings.Contains(joined, "command -v") || !strings.Contains(joined, "my-loader") {
+		t.Errorf("--import-cmd must win over probing: %q", joined)
 	}
 }
 

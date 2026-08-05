@@ -43,6 +43,10 @@ type Target struct {
 	Name    string // node name, for reporting
 	Address string // host or user@host
 	Runtime Runtime
+	// RuntimeRaw is the kubelet's own containerRuntimeVersion report (for example
+	// "isulad://2.1.5"). It is kept so an unrecognized runtime can be shown as
+	// what the kubelet actually said instead of a bare "unknown".
+	RuntimeRaw string
 }
 
 // NodeResult is the per-node outcome, shaped for both the human table and --json
@@ -104,11 +108,16 @@ func TransferAndImport(ctx context.Context, t Target, tarPath, image string, o S
 
 	verify, verr := VerifyCmd(t.Runtime, image, o.Sudo)
 	imp, ierr := ImportCmd(t.Runtime, remote, o.Sudo, o.ImportCmd)
-	if ierr != nil {
-		res.Error = ierr.Error()
-		return res
+	// ImportCmd only errors for an unknown runtime without an override. That is
+	// no reason to give up: the node is reachable over SSH, so probe it for the
+	// engine that is actually installed (skip-present folds into the script).
+	probe := ierr != nil
+	var work string
+	if probe {
+		work = AutoScript(remote, image, o.Sudo, o.SkipPresent, o.KeepRemote)
+	} else {
+		work = remoteScript(imp, verify, remote, verr == nil, o.KeepRemote)
 	}
-	work := remoteScript(imp, verify, remote, verr == nil, o.KeepRemote)
 
 	// Dry run: show the exact commands and touch nothing.
 	if o.DryRun {
@@ -138,15 +147,23 @@ func TransferAndImport(ctx context.Context, t Target, tarPath, image string, o S
 	res.Transferred = true
 
 	out, runErr := conn.run(ctx, work)
-	imported, verified, parsed := parseStatus(out)
+	st := parseStatus(out)
+	if probe && st.runtime != "" && st.runtime != "none" {
+		res.Runtime = st.runtime + " (probed)"
+	}
+	canVerify := verr == nil || probe // the probing script verifies with the engine it found
 	switch {
-	case parsed && !imported:
-		res.Error = fmt.Sprintf("import failed on the node%s", tail(out))
-	case parsed && verr == nil && !verified:
+	case probe && st.parsed && st.runtime == "none":
+		res.Error = "no container engine CLI on the node (tried docker/ctr/k3s/nerdctl/podman/isula) — pass --runtime or --import-cmd"
+	case st.parsed && st.skipped:
+		res.Skipped, res.Verified = true, true
+	case st.parsed && !st.imported:
+		res.Error = fmt.Sprintf("import failed on the node%s", tail(withoutMarker(out)))
+	case st.parsed && canVerify && !st.verified:
 		res.Error = "the load command succeeded but the image is not visible to the runtime — check the runtime and its namespace"
 		res.Imported = true
-	case parsed:
-		res.Imported, res.Verified = true, verr == nil
+	case st.parsed:
+		res.Imported, res.Verified = true, canVerify
 	case runErr != nil:
 		res.Error = fmt.Sprintf("import: %v%s", runErr, tail(out))
 	default:
@@ -155,8 +172,16 @@ func TransferAndImport(ctx context.Context, t Target, tarPath, image string, o S
 	return res
 }
 
-// statusMarker lets one round trip report both stages separately.
-var statusRe = regexp.MustCompile(`ldbg-status i=(-?\d+) v=(-?\d+)`)
+// statusMarker lets one round trip report both stages separately; the probing
+// script additionally reports the engine it found (rt=) and a skip-present hit
+// (s=).
+var statusRe = regexp.MustCompile(`ldbg-status i=(-?\d+) v=(-?\d+)(?: rt=(\S+))?(?: s=([01]))?`)
+
+// remoteStatus is the decoded ldbg-status marker.
+type remoteStatus struct {
+	parsed, imported, verified, skipped bool
+	runtime                             string
+}
 
 // remoteScript is import → verify → clean-up in one shell command, reporting each
 // stage's exit code so a single connection still yields a precise diagnosis.
@@ -173,15 +198,19 @@ func remoteScript(imp, verify, remote string, canVerify, keepRemote bool) string
 	return b.String()
 }
 
-func parseStatus(out string) (imported, verified, parsed bool) {
+func parseStatus(out string) remoteStatus {
 	m := statusRe.FindStringSubmatch(out)
 	if m == nil {
-		return false, false, false
+		return remoteStatus{}
 	}
 	i, _ := strconv.Atoi(m[1])
 	v, _ := strconv.Atoi(m[2])
-	return i == 0, v == 0, true
+	return remoteStatus{parsed: true, imported: i == 0, verified: v == 0, runtime: m[3], skipped: m[4] == "1"}
 }
+
+// withoutMarker drops the status line, so an error's tail shows the runtime's
+// own message instead of ldbg's bookkeeping.
+func withoutMarker(s string) string { return statusRe.ReplaceAllString(s, "") }
 
 func dial(ctx context.Context, address string, o SSHOpts, native bool) (nodeConn, error) {
 	if native {

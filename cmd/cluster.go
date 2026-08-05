@@ -32,6 +32,7 @@ var (
 	// SSH import
 	clusterSSHUser        string
 	clusterNodes          []string
+	clusterRuntime        string // force docker|containerd|cri-o instead of trusting the kubelet's report
 	clusterSSHOpts        string
 	clusterSudo           bool
 	clusterRemoteTmp      string
@@ -133,6 +134,13 @@ func renderPreflight(r clusterPreflightResult, archErr error) string {
 			fmt.Fprintf(&b, "  %-24s %-10s %-8s %s%s\n",
 				n.Name, orUnknown(n.Runtime), orUnknown(n.Arch), n.InternalIP, flag)
 		}
+		for _, n := range r.Nodes {
+			if offline.RuntimeOf(n.Runtime) == offline.RuntimeUnknown {
+				fmt.Fprintf(&b, "! %s reports container runtime %q, which ldbg does not recognize\n"+
+					"   → 'cluster install' via SSH will probe that node for its engine; force one with --runtime docker|containerd|cri-o\n",
+					n.Name, orUnknown(rawRuntime(n)))
+			}
+		}
 	}
 	fmt.Fprintf(&b, "target image: %s\n", r.Image)
 	if r.BundlePlatform != "" {
@@ -193,7 +201,10 @@ Import methods (--import-via, default auto):
             Needs no Docker (--engine docker keeps the old load/tag/push path).
   ssh       copy the bundle to each node and load it into that node's own runtime.
             The runtime (containerd / docker / cri-o) is read from the cluster, so
-            the right load command is used per node. Needs SSH and (usually)
+            the right load command is used per node. When the kubelet reports it
+            in a form ldbg does not recognize (customized PaaS distributions do),
+            the node itself is probed for its engine — or force one for every
+            node with --runtime docker|containerd|cri-o. Needs SSH and (usually)
             passwordless sudo on the nodes.
   minikube | kind | k3d   single-node development clusters
   auto      registry when --registry is set, ssh when --ssh-user/--nodes is set,
@@ -300,7 +311,7 @@ see the exact per-node commands.`,
 func importHint(via string) string {
 	switch via {
 	case "ssh":
-		return "check SSH access to the nodes (--ssh-opts '-i <key>'), and that the login can sudo without a password (or pass --sudo=false); --dry-run shows the exact commands"
+		return "check SSH access to the nodes (--ssh-opts '-i <key>'), and that the login can sudo without a password (or pass --sudo=false); if a node's runtime shows as unknown, force it with --runtime docker|containerd|cri-o; --dry-run shows the exact commands"
 	case "registry":
 		return "check --registry is reachable and writable (--creds user:password, --insecure for a self-signed one)"
 	default:
@@ -323,6 +334,7 @@ func init() {
 	// SSH import
 	insF.StringVar(&clusterSSHUser, "ssh-user", "", "login for the cluster nodes (addresses come from the cluster unless --nodes is given)")
 	insF.StringSliceVar(&clusterNodes, "nodes", nil, "node addresses to import into, e.g. root@10.0.0.1,root@10.0.0.2 (default: every schedulable node)")
+	insF.StringVar(&clusterRuntime, "runtime", "", "force the nodes' container runtime: docker|containerd|cri-o (default: read from the cluster; an unrecognized report is probed on the node)")
 	insF.StringVar(&clusterSSHOpts, "ssh-opts", "", "extra options passed to ssh/scp, e.g. \"-i ~/.ssh/id_rsa -o StrictHostKeyChecking=no\"")
 	insF.BoolVar(&clusterSudo, "sudo", true, "run the node's load command through sudo (needs passwordless sudo when non-interactive)")
 	insF.StringVar(&clusterRemoteTmp, "remote-tmp", "/tmp", "directory on the node to stage the archive in")

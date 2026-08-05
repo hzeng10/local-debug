@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
@@ -57,6 +58,58 @@ func TestNodeResultOK(t *testing.T) {
 		if got := c.r.OK(); got != c.want {
 			t.Errorf("case %d: OK() = %v, want %v (%+v)", i, got, c.want, c.r)
 		}
+	}
+}
+
+// --runtime exists to REMOVE guessing when the kubelet's report is unusable, so
+// a typo must be a hard error, never a silent fall-through to probing.
+func TestForcedRuntime(t *testing.T) {
+	defer func(old string) { clusterRuntime = old }(clusterRuntime)
+
+	clusterRuntime = ""
+	if rt, err := forcedRuntime(); err != nil || rt != offline.RuntimeUnknown {
+		t.Errorf("empty --runtime = (%q, %v)", rt, err)
+	}
+	clusterRuntime = "docker"
+	if rt, err := forcedRuntime(); err != nil || rt != offline.RuntimeDocker {
+		t.Errorf("--runtime docker = (%q, %v)", rt, err)
+	}
+	clusterRuntime = "crio"
+	if rt, err := forcedRuntime(); err != nil || rt != offline.RuntimeCRIO {
+		t.Errorf("--runtime crio = (%q, %v)", rt, err)
+	}
+	clusterRuntime = "dokcer"
+	if _, err := forcedRuntime(); err == nil {
+		t.Error("a mistyped --runtime must be rejected")
+	}
+}
+
+// The kubelet's own report must survive to the user: "unknown" alone is
+// undiagnosable (this is exactly what made the paas-* cluster failure opaque).
+func TestRawRuntimeAndLabel(t *testing.T) {
+	defer func(old string) { clusterImportCmd = old }(clusterImportCmd)
+	clusterImportCmd = ""
+
+	if got := rawRuntime(k8s.NodeInfo{Runtime: "isulad", RuntimeVersion: "2.1.5"}); got != "isulad://2.1.5" {
+		t.Errorf("rawRuntime = %q", got)
+	}
+	if got := rawRuntime(k8s.NodeInfo{Runtime: "docker"}); got != "docker" {
+		t.Errorf("rawRuntime without version = %q", got)
+	}
+	if got := rawRuntime(k8s.NodeInfo{}); got != "" {
+		t.Errorf("rawRuntime empty = %q", got)
+	}
+
+	if got := runtimeLabel(offline.Target{Runtime: offline.RuntimeDocker}); got != "docker" {
+		t.Errorf("label for a known runtime = %q", got)
+	}
+	got := runtimeLabel(offline.Target{Runtime: offline.RuntimeUnknown, RuntimeRaw: "isulad://2.1.5"})
+	if !strings.Contains(got, `"isulad://2.1.5"`) || !strings.Contains(got, "probing") {
+		t.Errorf("label must show the kubelet's report and announce probing: %q", got)
+	}
+	clusterImportCmd = "isula load -i %s"
+	if got := runtimeLabel(offline.Target{Runtime: offline.RuntimeUnknown}); !strings.Contains(got, "--import-cmd") {
+		t.Errorf("label with an override = %q", got)
 	}
 }
 
