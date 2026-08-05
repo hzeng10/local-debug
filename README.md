@@ -117,6 +117,12 @@ ldbg cluster install --bundle tel2-bundle.tar --ssh-user root --dry-run   # 没�
 ldbg cluster install --bundle tel2-bundle.tar --import-via minikube       # 单节点开发集群
 ```
 
+**traffic-manager 装在哪个命名空间**：默认 `ambassador`（Telepresence 约定）。集群不允许用它时，
+加全局参数 `--manager-namespace <命名空间>`，或设环境变量 `LDBG_MANAGER_NAMESPACE`（推荐，
+安装、`ldbg up` 连接、`ldbg logs --manager` 都跟着走）。**全队必须用同一个值**——这个参数会覆盖
+telepresence 客户端配置里的设置，不一致就会连到一个没有 manager 的命名空间；`ldbg doctor` 的
+`manager-namespace` 检查项就是查这个。换命名空间前先卸载旧的 manager。
+
 **节点运行时不用指定**：`ldbg` 从集群的 `containerRuntimeVersion` 读出来，按节点自动选
 containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动用 `k3s ctr`）、docker → `docker load`、
 cri-o → `podman load`，导入后逐节点校验并清理临时文件。仓库推送同样**无需本机 Docker**。

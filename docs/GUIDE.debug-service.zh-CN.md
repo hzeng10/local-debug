@@ -130,6 +130,11 @@ kubectl -n kube-system get deploy,svc gde-adapter
 
    没有的话，气隙集群的离线安装步骤见 [SETUP §4](SETUP.zh-CN.md#4-集群侧离线安装-traffic-manager一次性)。
 
+   > 你们集群把 traffic-manager 装在别的命名空间时，把上面的 `-n ambassador` 换成那个命名空间，
+   > 并且**每条 `ldbg` 命令都要带** `--manager-namespace <命名空间>`——建议直接设环境变量
+   > `LDBG_MANAGER_NAMESPACE`（Windows：`$env:LDBG_MANAGER_NAMESPACE="<命名空间>"`），
+   > 一次设置对所有命令生效。设错了 `ldbg doctor` 的 `manager-namespace` 一项会直接告诉你。
+
 3. **在 `gde-adapter` 的服务仓库根目录使用 `ldbg`** —— 生成的 `.ldbg/`（env-file、本地日志）和
    `.run/`（IDE 运行配置）都落在当前目录。把它们加进服务仓库的 `.gitignore`：
 

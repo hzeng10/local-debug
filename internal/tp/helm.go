@@ -39,9 +39,14 @@ func (c *Client) helm(ctx context.Context, verb string, o HelmOpts) error {
 	return err
 }
 
-// HelmUninstall removes the traffic-manager.
-func (c *Client) HelmUninstall(ctx context.Context) error {
-	_, err := c.run(ctx, "helm", "uninstall")
+// HelmUninstall removes the traffic-manager from the namespace it was installed
+// in — which is not necessarily the default one, so the caller must say.
+func (c *Client) HelmUninstall(ctx context.Context, managerNamespace string) error {
+	args := []string{"helm", "uninstall"}
+	if managerNamespace != "" {
+		args = append(args, "--namespace", managerNamespace)
+	}
+	_, err := c.run(ctx, args...)
 	return err
 }
 

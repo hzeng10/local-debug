@@ -60,7 +60,26 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 			add("cluster-reachable", "pass", "kubernetes "+v)
 		}
 
-		// 3) Connection + traffic-manager (best-effort; needs the daemon).
+		// 3) Is the manager where ldbg will look for it? `telepresence connect
+		// --manager-namespace` overrides even the client config, so a manager
+		// installed somewhere else simply never gets found — check the namespace
+		// directly rather than leaving that as a confusing connect failure.
+		mns := managerNS()
+		if cl != nil {
+			if _, merr := cl.ManagerPod(ctx, mns); merr == nil {
+				add("manager-namespace", "pass", "traffic-manager pod found in namespace "+mns)
+			} else {
+				detail := "no traffic-manager pod in namespace " + mns
+				if mns == DefaultManagerNamespace {
+					detail += "; install it with 'ldbg cluster install', or point ldbg at another namespace with --manager-namespace / " + ManagerNamespaceEnv
+				} else {
+					detail += " (selected via --manager-namespace / " + ManagerNamespaceEnv + ") — check the namespace, or drop the override to use " + DefaultManagerNamespace
+				}
+				add("manager-namespace", "warn", detail)
+			}
+		}
+
+		// 4) Connection + traffic-manager (best-effort; needs the daemon).
 		var tpStatus *tp.Status
 		if tpc.Available() {
 			if st, serr := tpc.Status(ctx); serr == nil {
@@ -76,7 +95,7 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 			}
 		}
 
-		// 4) Ambient assessment (namespace, and the target workload if given).
+		// 5) Ambient assessment (namespace, and the target workload if given).
 		if cl != nil {
 			ns := flagNamespace
 			if ns == "" {
@@ -94,7 +113,7 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 			}
 		}
 
-		// 5) Log store + collection coverage (warn-only: the log stack is
+		// 6) Log store + collection coverage (warn-only: the log stack is
 		// optional infrastructure — its absence must not block intercepts).
 		if cl != nil {
 			logStoreChecks(ctx, tpStatus, args, add)

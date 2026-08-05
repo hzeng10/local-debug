@@ -220,6 +220,32 @@ kubectl -n ambassador get deploy traffic-manager \
 # 期望：ghcr.io/telepresenceio/tel2:2.29.0 IfNotPresent
 ```
 
+### 4.2 traffic-manager 装在别的命名空间
+
+默认命名空间是 `ambassador`（Telepresence 的约定）。集群不允许自建命名空间、或要求统一放到既有
+命名空间时，用全局参数 `--manager-namespace`，或环境变量 `LDBG_MANAGER_NAMESPACE`：
+
+```bash
+export LDBG_MANAGER_NAMESPACE=tel-mgr        # Windows: $env:LDBG_MANAGER_NAMESPACE="tel-mgr"
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root --runtime docker
+ldbg doctor                                   # manager-namespace 一项应显示在该命名空间找到 Pod
+ldbg up gde-adapter -n kube-system
+```
+
+> **这个值必须全队一致**。`telepresence connect --manager-namespace` 会**覆盖客户端配置文件里的
+> 设置**，所以只要有一处不一致，客户端就会去一个没有 manager 的命名空间找，表现为连接失败。
+> 推荐用环境变量在团队/CI 里固定下来，而不是每条命令手写。`ldbg doctor` 的 `manager-namespace`
+> 检查项就是为这个失败模式准备的：它直接查该命名空间里有没有 traffic-manager 的 Pod。
+>
+> 换命名空间前，**先把旧的卸载掉**（`telepresence helm uninstall --manager-namespace <旧命名空间>`），
+> 两个 manager 并存时注入用的 webhook（`agent-injector-webhook-<命名空间>`）会互相抢。
+> 卸载时如果报 `the helm operation timed out`，在 `~/.config/telepresence/config.yml` 里写
+> `timeouts:` / `  helm: 3m` 再重试（默认 30 秒等不及资源删除；安装本身只要一两秒）。
+>
+> **ambient 网格注意**：选的命名空间最好没有被纳入 Istio ambient 网格。已验证的组合是
+> manager 所在命名空间不在网格内；若它带了 `istio.io/dataplane-mode=ambient` 标签，
+> manager 的流量会经过 ztunnel，属于未验证路径。
+
 ---
 
 ## 5. 日常调试流程（每次，"只在笔记本上启动并调试"）

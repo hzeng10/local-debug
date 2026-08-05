@@ -13,11 +13,12 @@ import (
 
 // Global flags, resolved once in PersistentPreRun and shared with subcommands.
 var (
-	flagJSON       bool
-	flagContext    string
-	flagNamespace  string
-	flagKubeconfig string
-	flagTPBin      string
+	flagJSON             bool
+	flagContext          string
+	flagNamespace        string
+	flagKubeconfig       string
+	flagTPBin            string
+	flagManagerNamespace string
 
 	// out is the shared Printer, constructed from the global flags.
 	out *output.Printer
@@ -55,6 +56,8 @@ func init() {
 	pf.StringVarP(&flagNamespace, "namespace", "n", "", "Kubernetes namespace of the target service")
 	pf.StringVar(&flagKubeconfig, "kubeconfig", "", "path to kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
 	pf.StringVar(&flagTPBin, "telepresence-bin", "", "path to the telepresence binary (default: PATH, then ~/.local/bin)")
+	pf.StringVar(&flagManagerNamespace, "manager-namespace", os.Getenv(ManagerNamespaceEnv),
+		"namespace the traffic-manager lives in (default \""+DefaultManagerNamespace+"\"; env "+ManagerNamespaceEnv+")")
 }
 
 // notImplemented is a placeholder for commands whose logic lands in a later build

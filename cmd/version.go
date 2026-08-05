@@ -21,7 +21,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print ldbg and target Telepresence versions",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		info := versionInfo{Ldbg: Version, Telepresence: TelepresenceVersion, TrafficManagerNS: "ambassador"}
+		info := versionInfo{Ldbg: Version, Telepresence: TelepresenceVersion, TrafficManagerNS: managerNS()}
 		out.Result("version",
 			"ldbg "+info.Ldbg+" (targets Telepresence "+info.Telepresence+")", info)
 		return nil

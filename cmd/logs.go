@@ -40,11 +40,11 @@ unless you launched it with 'ldbg up --run').`,
 		}
 
 		if logsManager {
-			pod, perr := cl.ManagerPod(ctx, managerNamespace)
+			pod, perr := cl.ManagerPod(ctx, managerNS())
 			if perr != nil {
 				return out.Failf("logs", "is the traffic-manager installed?", perr)
 			}
-			return cl.StreamPodLogs(ctx, managerNamespace, pod, "traffic-manager", "[traffic-manager]", logsFollow, logsTail, os.Stdout)
+			return cl.StreamPodLogs(ctx, managerNS(), pod, "traffic-manager", "[traffic-manager]", logsFollow, logsTail, os.Stdout)
 		}
 
 		if len(args) == 0 {

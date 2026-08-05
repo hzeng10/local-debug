@@ -94,7 +94,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 			out.Info("… connecting to cluster (telepresence connect)")
 			// Scope the connection to the target namespace so `down` can uninstall the
 			// agent (telepresence uninstall resolves in the connected namespace).
-			if cerr := tpc.Connect(ctx, tp.ConnectOpts{Namespace: ns, Context: flagContext, ManagerNamespace: managerNamespace}); cerr != nil {
+			if cerr := tpc.Connect(ctx, tp.ConnectOpts{Namespace: ns, Context: flagContext, ManagerNamespace: managerNS()}); cerr != nil {
 				return out.Failf("up",
 					"the root network daemon needs elevation once — run 'telepresence connect' yourself (sudo on Linux, admin on Windows), then re-run 'ldbg up'",
 					cerr)

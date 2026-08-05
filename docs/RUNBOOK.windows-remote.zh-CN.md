@@ -251,6 +251,21 @@ kubectl -n ambassador get deploy traffic-manager `
 
 - ✅ **检查点 B**：traffic-manager 在 `ambassador` 命名空间 Running，使用离线镜像。
 
+**不能用 `ambassador` 命名空间？** 加全局参数 `--manager-namespace <命名空间>`，或设环境变量
+`LDBG_MANAGER_NAMESPACE`（推荐，省得每条命令都写）：
+
+```powershell
+$env:LDBG_MANAGER_NAMESPACE = "tel-mgr"
+ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --runtime docker
+ldbg.exe doctor          # manager-namespace 一项应显示"在 tel-mgr 找到 traffic-manager Pod"
+```
+
+安装、连接（`ldbg up`）、读 manager 日志（`ldbg logs --manager`）都会跟着这个值走。
+三点提醒：**全队必须用同一个值**（`--manager-namespace` 会覆盖客户端配置文件里的设置，
+不一致就会连到一个没有 manager 的命名空间）；**换命名空间前先卸载旧的**
+（`telepresence helm uninstall --manager-namespace <旧命名空间>`，两个 manager 并存会抢注入 webhook）；
+**优先选没有纳入 ambient 网格的命名空间**。
+
 ---
 
 ## 阶段 C — Windows 11 笔记本环境准备（一次性）

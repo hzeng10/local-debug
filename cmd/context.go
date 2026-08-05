@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
 	"github.com/hzeng10/local-debug/internal/tp"
@@ -31,8 +32,26 @@ func newTPClient() *tp.Client {
 	return tp.New(bin)
 }
 
-// managerNamespace is where the traffic-manager lives (telepresence default).
-const managerNamespace = "ambassador"
+const (
+	// DefaultManagerNamespace is where telepresence puts the traffic-manager
+	// unless told otherwise.
+	DefaultManagerNamespace = "ambassador"
+	// ManagerNamespaceEnv sets it without repeating the flag on every command,
+	// which is what an agent or a CI job wants.
+	ManagerNamespaceEnv = "LDBG_MANAGER_NAMESPACE"
+)
+
+// managerNS is where the traffic-manager lives. It has to agree across install,
+// connect and log reading: `telepresence connect --manager-namespace` overrides
+// even the client's own config file, so a mismatch here means the daemon looks
+// for a manager that is not there. Precedence: --manager-namespace, then the
+// environment, then telepresence's own default.
+func managerNS() string {
+	if ns := strings.TrimSpace(flagManagerNamespace); ns != "" {
+		return ns
+	}
+	return DefaultManagerNamespace
+}
 
 // newK8sClient builds a client-go client from the global --kubeconfig/--context flags.
 func newK8sClient() (*k8s.Client, error) {

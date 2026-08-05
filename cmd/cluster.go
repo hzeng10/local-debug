@@ -278,7 +278,7 @@ see the exact per-node commands.`,
 			return out.Failf("cluster install", "install the telepresence client or pass --telepresence-bin", errTelepresenceMissing)
 		}
 		hopts := tp.HelmOpts{
-			ManagerNamespace: managerNamespace,
+			ManagerNamespace: managerNS(),
 			Registry:         registry,
 			AgentImage:       agentImage,
 			PullPolicy:       "IfNotPresent",
