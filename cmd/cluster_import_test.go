@@ -61,6 +61,23 @@ func TestNodeResultOK(t *testing.T) {
 	}
 }
 
+// The injected agent is pulled by the intercepted workload's pod, not by the
+// installer — so when the image was pushed to an internal registry, the agent
+// must point there too. Defaulting it to the public reference would only fail
+// once an intercept starts, long after install said it succeeded.
+func TestDefaultAgentImage(t *testing.T) {
+	const img = "ghcr.io/telepresenceio/tel2:2.29.0"
+	if got := defaultAgentImage("", "", img); got != img {
+		t.Errorf("no registry: %q", got)
+	}
+	if got := defaultAgentImage("", "harbor.corp/tel", img); got != "harbor.corp/tel/tel2:2.29.0" {
+		t.Errorf("with registry: %q", got)
+	}
+	if got := defaultAgentImage("my.corp/tel2:dev", "harbor.corp/tel", img); got != "my.corp/tel2:dev" {
+		t.Errorf("--agent-image must win: %q", got)
+	}
+}
+
 // --runtime exists to REMOVE guessing when the kubelet's report is unusable, so
 // a typo must be a hard error, never a silent fall-through to probing.
 func TestForcedRuntime(t *testing.T) {

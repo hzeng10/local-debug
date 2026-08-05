@@ -21,7 +21,7 @@
 | 把镜像送进集群（`ldbg cluster install`）的设计 | 本文档 §16 |
 | 笔记本无法直连集群时的接入方式 | 本文档 §17 |
 | 为什么某些地方是为 AI 编码代理专门设计的 | 本文档 §18 |
-| 所有关键决策及其理由（含踩过的坑） | 本文档 §4（D1–D8）与 §19（D9–D23） |
+| 所有关键决策及其理由（含踩过的坑） | 本文档 §4（D1–D8）与 §19（D9–D24） |
 | 怎么操作（面向使用者） | [`GUIDE.debug-service.zh-CN.md`](GUIDE.debug-service.zh-CN.md)、[`SETUP.zh-CN.md`](SETUP.zh-CN.md)、[`RUNBOOK.windows-remote.zh-CN.md`](RUNBOOK.windows-remote.zh-CN.md) |
 
 ---
@@ -690,6 +690,35 @@ traffic-manager 只有一个副本，看上去只需要一个节点有镜像。�
 **单节点失败不中断其余节点**：结果逐节点收集，最后统一汇总。多节点场景中，
 一个节点不可达就放弃全部工作是不可接受的。
 
+### 16.7 安装那一半：chart 取值名与 agent 镜像的落点（v0.3.6）
+
+镜像进了节点之后，还要用内嵌 chart 把 traffic-manager 装起来。这一步的取值名**必须与
+chart 实际声明的一致**：`telepresence-oss` chart（2.29.0）的取值定义里
+"不允许出现未声明的属性"，所以名字写错不是"某个参数被忽略"，而是**整批取值被拒绝、安装一步都不执行**。
+
+真实故障（2026-08-05）：工具下发的是旧版 chart 的 `images.registry` / `images.agentImage` /
+`images.pullPolicy`，而该 chart 没有顶层 `images` 键，于是报
+`additional properties 'images' not allowed`——此时镜像其实已经成功导入节点。正确的映射是：
+
+| 用途 | chart 取值名 | 渲染结果 |
+| --- | --- | --- |
+| traffic-manager 镜像 | `image.registry`、`image.name`、`image.tag`、`image.pullPolicy` | 直接拼成容器镜像：`仓库/名称:标签` |
+| 注入的 traffic-agent 镜像 | `agent.image.registry`、`agent.image.name`、`agent.image.tag`、`agent.image.pullPolicy` | 转成 traffic-manager 的环境变量 `AGENT_REGISTRY`、`AGENT_IMAGE_NAME`、`AGENT_IMAGE_TAG`、`AGENT_IMAGE_PULL_POLICY`，由它在注入时组装 |
+
+因为 chart 把 agent 镜像**拆成三段**接收，工具内部需要把一个完整镜像引用拆开。
+两个易错点：仓库地址可能带端口（`主机:5000/路径/名称:标签`），所以只有最后一段路径里的冒号才是标签分隔符；
+以摘要固定的引用无法用"仓库/名称:标签"表达，因此**直接报错**而不是猜一个标签。
+
+**agent 镜像必须跟着实际落点走**：注入的 traffic-agent 是由**被拦截工作负载的 Pod** 拉取的。
+指定了内部仓库时，如果 agent 镜像仍指向公网地址，安装会显示成功，
+而失败要等到真正发起拦截时才以镜像拉取失败的形式暴露——在气隙集群里就是拉不到。
+因此未显式指定 agent 镜像时，它默认指向镜像实际被推送到的位置。
+
+> **这次故障暴露的验证缺口**：此前对 `cluster install` 的真机验证一直加着 `--import-only`，
+> 只覆盖镜像分发那一半；验证集群上的 traffic-manager 又是用原生 telepresence 命令装的，
+> 于是安装参数长期错误却无人发现。**命令分成两段时，验证必须覆盖到最后一段。**
+> 现在的验证流程是：卸载 traffic-manager → 执行完整安装 → 检查渲染结果 → 重复执行走升级路径。
+
 ## 17. 远程接入设计
 
 ### 17.1 前提事实
@@ -765,7 +794,7 @@ Telepresence 通过**集群应用程序接口的端口转发**到达 traffic-man
 对集群节点执行特权命令前，可以先打印**将要执行的确切命令**而不做任何改动。
 这既满足管理员的审阅需求，也让代理可以把计划摊给人类确认后再执行。
 
-## 19. 关键设计决策（D9–D23）
+## 19. 关键设计决策（D9–D24）
 
 | 编号 | 决策点 | 结论 | 理由 |
 | --- | --- | --- | --- |
@@ -784,6 +813,7 @@ Telepresence 通过**集群应用程序接口的端口转发**到达 traffic-man
 | D21 | 单节点往返次数 | 导入、校验、清理合并为一条远程脚本，通过回传各阶段退出码保留诊断能力 | 往返次数决定延迟与密码输入次数；但不能以丢失诊断信息为代价 |
 | D22 | 密码类凭证传入方式 | **只接受环境变量**，不提供命令行参数 | 命令行参数会进入进程列表、命令历史与持续集成日志 |
 | D23 | kubelet 上报非标准运行时字符串 | **不再直接拒绝**：可 `--runtime` 强制指定，零参数时在节点上探测实际引擎（docker 优先），原始字符串始终展示 | 节点已经可以登录时，探测的成本只是一条远程命令，放弃是错误的默认；docker 优先是因为非标准上报几乎都来自 docker 分支，且 docker 自带受它管理的 containerd，先探测 `ctr` 会把镜像装进 kubelet 不看的地方（详见 §16.3.1） |
+| D24 | 安装参数与 agent 镜像落点 | 按 chart 实际声明的取值名下发（`image.*` 与 `agent.image.*`，后者拆成三段），并让 agent 镜像默认跟随镜像实际被推送到的位置 | chart 的取值定义不允许未声明的属性，名字错一处就整批被拒、安装不执行；agent 由被拦截工作负载的 Pod 拉取，指向公网会在拦截时才失败（详见 §16.7） |
 
 ## 20. 附录：完整命令面
 

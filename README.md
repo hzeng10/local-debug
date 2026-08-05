@@ -99,7 +99,9 @@ EnvFile 插件加载；VS Code `.vscode/launch.json` 用原生 `envFile`）。
 ## 离线 / 气隙安装
 
 traffic-manager 与注入的 traffic-agent 是**同一个镜像**：`ghcr.io/telepresenceio/tel2:<版本>`。
-Helm chart 已内嵌在 Telepresence 客户端中（无需联网，也无需 `helm` 二进制）。
+Helm chart 已内嵌在 Telepresence 客户端中（无需联网，也无需 `helm` 二进制）。安装时 `ldbg` 按
+`telepresence-oss` chart 的取值名下发：manager 用 `image.*`，注入的 agent 用 `agent.image.*`；
+用了 `--registry` 时**两者都指向该仓库**（agent 是被拦截工作负载的 Pod 去拉的）。
 
 ```bash
 # 0) 先看集群节点是什么架构（决定要打哪个包）

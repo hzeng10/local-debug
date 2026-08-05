@@ -173,9 +173,13 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube
    **SSH 到节点上探测**实际安装的引擎（探测顺序 docker → ctr → k3s ctr → nerdctl →
    podman → isula），用命中的引擎导入并校验，结果标注为如 `docker (probed)`；
    也可以用 `--runtime docker|containerd|cri-o` 对所有节点强制指定，跳过探测。
-2. `telepresence helm install`（chart 内嵌、**无需联网**），并设置
-   `images.agentImage`、必要时 `images.registry`，以及 `images.pullPolicy=IfNotPresent`，
+2. `telepresence helm install`（chart 内嵌、**无需联网**），并按 `telepresence-oss` chart
+   的取值名下发：traffic-manager 镜像用 `image.registry` 与 `image.pullPolicy`，
+   注入的 traffic-agent 镜像用 `agent.image.registry` / `agent.image.name` /
+   `agent.image.tag` / `agent.image.pullPolicy`（`pullPolicy` 一律 `IfNotPresent`），
    确保集群只用已侧载的镜像、**绝不访问外网**。已安装过则自动改为 `helm upgrade`。
+   给了 `--registry` 时，**agent 镜像同样指向该仓库**——它是由被拦截工作负载的 Pod 去拉的，
+   留在公网地址会在拦截时才失败。
 
 > **为什么默认导入到所有节点**：注入的 traffic-agent 与 traffic-manager 是**同一个镜像**，
 > 会跟着被拦截的工作负载调度到任意节点。少导一个节点，拦截时那个 Pod 就会 ImagePullBackOff。
@@ -351,7 +355,8 @@ ClaudeCode 的安装、`.claude/settings.json` 权限白名单示例与典型提
 | 集群内调用该服务出现 **connection reset** | ambient 下 istio-cni 与 traffic-agent 争端口。`ldbg up` 已自动打 `dataplane-mode=none` 豁免；若用了 `--keep-ambient` 则会复现。确认目标 Pod 模板带 `istio.io/dataplane-mode=none`。 |
 | `telepresence connect` 失败 / 卡住 | root 守护进程需要提权。Linux：在自己的终端里运行（可输入 sudo 密码）；不要在无 TTY 的非交互环境运行。 |
 | `ldbg up` 报无法连接 | 同上——先在终端手动 `telepresence connect` 一次，再跑 `ldbg up`。 |
-| traffic-manager 起不来 / ImagePull 失败 | 镜像没侧载成功，或 `images.registry/agentImage` 没指向已导入镜像。重做 §4，确认 `imagePullPolicy=IfNotPresent` 且镜像在集群可见。 |
+| traffic-manager 起不来 / ImagePull 失败 | 镜像没侧载成功，或 `image.registry` / `agent.image.registry` 没指向已导入镜像。重做 §4，确认 `imagePullPolicy=IfNotPresent` 且镜像在集群可见。 |
+| `additional properties 'images' not allowed` | helm 取值名用错了（`images.*` 是旧版 chart 的写法，`telepresence-oss` chart 的 schema 不接受）。升级到 ldbg v0.3.6 及以上；临时可直接跑 `telepresence helm install -n ambassador --set image.pullPolicy=IfNotPresent --set agent.image.pullPolicy=IfNotPresent`。 |
 | 客户端与 manager 版本不一致 | 让 `telepresence version`（客户端）与 §4 安装版本一致（默认 2.29.0）。 |
 | 出站调用被依赖的 L4 AuthorizationPolicy 拒绝 | 实测中本地出站经由 traffic-agent 所在 Pod 出去，源 IP 表现为被拦截工作负载的 Pod IP，因此按调用方身份鉴权通常**可通过**；如仍被拒，检查该依赖上是否有更严格的 PeerAuthentication/AuthorizationPolicy。 |
 | 笔记本上没有 kubectl / kubeconfig，`kubectl` 只在跳板机/节点 | 首选 `ldbg cluster fetch-kubeconfig --ssh user@节点` 拉取真凭证 + `ssh -L` 直通 apiserver——笔记本获得完整能力（含 `ldbg up`）。禁止携出凭证时退回：跳板机 `kubectl port-forward svc/victorialogs` + 笔记本 `ldbg logs query --vlogs-addr http://127.0.0.1:9428`，拦截跑在跳板机。先用 `ldbg cluster probe` 确认桥接可用。详见 [RUNBOOK 阶段 J](RUNBOOK.windows-remote.zh-CN.md)。 |

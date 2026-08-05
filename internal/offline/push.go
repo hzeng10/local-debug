@@ -59,8 +59,8 @@ func NativePush(ctx context.Context, tarPath, dst string, o PushOpts) (string, e
 }
 
 // PushDestination is where the bundled image lands in the internal registry:
-// the registry path plus the image's own name:tag, so the cluster can be pointed
-// at it with images.registry alone.
+// the registry path plus the image's own name:tag, so the chart can be pointed at
+// it with image.registry / agent.image.registry alone.
 func PushDestination(registryPath, canonicalImage string) string {
 	return strings.TrimRight(registryPath, "/") + "/" + lastPathSegment(canonicalImage)
 }

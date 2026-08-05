@@ -193,8 +193,8 @@ var clusterInstallCmd = &cobra.Command{
 	Short: "Offline-install the traffic-manager (import image + embedded-chart helm install)",
 	Long: `install performs the air-gapped traffic-manager install: get the bundled tel2
 image into the cluster, then 'telepresence helm install' from the client's embedded
-chart with images.registry / images.agentImage pointed at it and pullPolicy
-IfNotPresent — so the cluster never reaches the internet.
+chart with image.* (the manager) and agent.image.* (the injected agent) pointed at
+it and pullPolicy IfNotPresent — so the cluster never reaches the internet.
 
 Import methods (--import-via, default auto):
   registry  push the bundle to an internal registry; every node pulls from there.
@@ -270,10 +270,7 @@ see the exact per-node commands.`,
 		}
 
 		// 2) Install the traffic-manager from the embedded chart.
-		agentImage := clusterAgentImage
-		if agentImage == "" {
-			agentImage = image // same tel2 image serves the agent
-		}
+		agentImage := defaultAgentImage(clusterAgentImage, clusterRegistry, image)
 		registry := clusterRegistry // empty → chart default (ghcr.io/telepresenceio)
 		out.Info("… telepresence helm install (embedded chart, pullPolicy=IfNotPresent)")
 		tpc := newTPClient()
@@ -305,6 +302,23 @@ see the exact per-node commands.`,
 		out.Result("cluster install", human, res)
 		return nil
 	},
+}
+
+// defaultAgentImage decides which image the injected traffic-agent runs. The
+// agent uses the SAME tel2 image as the manager, but it is pulled by the
+// intercepted workload's pod — so when the image went to an internal registry,
+// the agent has to point THERE. Leaving it at the public reference would pull
+// from the internet, which in an air-gapped cluster fails at intercept time,
+// long after install reported success.
+func defaultAgentImage(explicit, registry, image string) string {
+	switch {
+	case explicit != "":
+		return explicit
+	case registry != "":
+		return offline.PushDestination(registry, image)
+	default:
+		return image
+	}
 }
 
 // importHint points at the most common cause of failure per method.

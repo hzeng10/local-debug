@@ -404,6 +404,42 @@ Java 异常堆栈必须归并为一条记录，关键字能匹配到堆栈帧。
 **实现状态**：已实现（v0.3.5）。探测脚本已在真实 docker 节点上验证
 （探测命中、导入、校验、清理、skip-present 全部通过）；`--runtime` 强制路径已全链路验证。
 
+#### FR-E8　安装参数必须与 traffic-manager chart 的取值定义一致
+
+**需求陈述**：以内嵌 chart 安装 traffic-manager 时，下发的取值名必须与该 chart 实际声明的取值一致；
+并且 traffic-manager 镜像与**注入的 traffic-agent 镜像**都必须指向已侧载或已推送的位置。
+
+**为什么需要**：这是一次真实故障（2026-08-05）。工具下发的是 `images.registry`、
+`images.agentImage`、`images.pullPolicy`——这是旧版 chart 的取值名。
+`telepresence-oss` chart（2.29.0）没有顶层 `images` 键，且其取值定义中
+"不允许出现未声明的属性"，因此**整批取值在校验阶段被拒绝，安装一步都没有执行**，
+报错为 `additional properties 'images' not allowed`。当时镜像其实已经成功导入节点，
+故障点完全在安装参数上。
+
+同一处还有第二个隐患：注入的 traffic-agent 镜像是由**被拦截工作负载的 Pod** 去拉取的。
+指定了内部镜像仓库时，如果 agent 镜像仍指向公网地址，安装会显示成功，
+而失败要等到真正发起拦截时才以镜像拉取失败的形式出现——在气隙集群中即为不可恢复。
+
+**验收标准**：
+1. traffic-manager 镜像通过 `image.registry`、`image.pullPolicy` 下发；
+   注入的 traffic-agent 镜像通过 `agent.image.registry`、`agent.image.name`、
+   `agent.image.tag`、`agent.image.pullPolicy` 下发（chart 要求镜像引用**拆成三段**）。
+2. 完整镜像引用拆分时，仓库地址允许带端口（形如 `主机:5000/路径/名称:标签`），
+   即只有最后一段路径里的冒号才是标签分隔符。
+3. 以摘要（digest）固定的镜像引用**明确报错**，因为 chart 只能表达"仓库/名称:标签"。
+4. 指定内部镜像仓库且未显式指定 agent 镜像时，agent 镜像**自动指向该仓库**。
+5. 单元测试固定这些取值名，并断言不再出现任何 `images.` 前缀的取值。
+
+**实现状态**：已实现（v0.3.6）。已在真实集群上完成**完整安装链路**验证：
+卸载 traffic-manager 后重新执行完整的 `cluster install`（不加 `--import-only`），
+安装成功、Pod 就绪，且渲染结果正确（manager 镜像与拉取策略、agent 镜像的三个环境变量）；
+重复执行走升级路径同样成功。
+
+> **本次故障暴露的验证缺口（值得记录）**：此前对 `cluster install` 的真机验证一直加着
+> `--import-only`，只覆盖了镜像分发那一半；而验证集群上的 traffic-manager 是用原生
+> telepresence 命令装的，因此安装参数错误长期未被发现。
+> **凡是命令分成两段的，验证必须覆盖到最后一段。**
+
 ### 4.F 组：面向 AI 编码代理的可驱动性
 
 #### FR-F1　统一的结构化输出
@@ -680,6 +716,8 @@ Java 异常堆栈必须归并为一条记录，关键字能匹配到堆栈帧。
 - [ ] 对已安装的集群重复执行安装命令能成功完成。
 - [ ] kubelet 上报非标准运行时字符串的节点：`--runtime` 强制指定可完成导入并校验；
       不给参数时在节点上探测出实际引擎完成导入，结果带 `(probed)` 标注。
+- [ ] **完整**执行一次安装（不加 `--import-only`）：traffic-manager 就绪，其镜像与拉取策略正确，
+      注入 agent 的镜像环境变量指向已侧载/已推送的位置。
 
 **AI 编码代理可驱动性**
 - [ ] 在无终端环境中，设置密码环境变量后可完成整套导入流程，无任何交互。

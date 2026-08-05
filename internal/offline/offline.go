@@ -332,7 +332,7 @@ const (
 
 // ImportBundle loads the tarball/image into the cluster per the chosen method.
 // For registry, image is re-tagged under registryPath and pushed; the caller then
-// installs with images.registry=registryPath.
+// installs with image.registry=registryPath.
 func ImportBundle(ctx context.Context, method Importer, tarPath, image, registryPath string) (string, error) {
 	switch method {
 	case ImportMinikube:

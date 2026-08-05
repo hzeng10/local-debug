@@ -188,6 +188,42 @@ ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --runtime dock
 ldbg.exe cluster install --bundle tel2-bundle.tar --ssh-user root --import-cmd "docker load -i %s"
 ```
 
+**故障：helm 取值名（`additional properties 'images' not allowed'`）**。真实报错示例：
+
+```text
+  ✓ paas-172-25-71-121: imported and verified
+… telepresence helm install (embedded chart, pullPolicy=IfNotPresent)
+error: telepresence helm: telepresence helm install: error: values don't meet the
+specifications of the schema(s) in the following chart(s):
+telepresence-oss:
+- at '': additional properties 'images' not allowed
+```
+
+**镜像已经成功装进节点了，这一步与镜像无关。** 根因：ldbg v0.3.5 及以前给 helm 传的是
+`images.registry` / `images.agentImage` / `images.pullPolicy`——那是旧版 chart 的写法。
+`telepresence-oss` chart（2.29.0）**没有顶层 `images` 键**，且它的取值 schema 是
+`additionalProperties: false`，所以任何 `images.*` 都在校验阶段被整体拒绝，安装一步都没执行。
+正确的取值名是：
+
+| 用途 | 正确取值名 |
+| --- | --- |
+| traffic-manager 镜像 | `image.registry`、`image.name`、`image.tag`、`image.pullPolicy` |
+| 注入的 traffic-agent 镜像 | `agent.image.registry`、`agent.image.name`、`agent.image.tag`、`agent.image.pullPolicy` |
+
+**修复**：升级到 ldbg v0.3.6 及以上，重跑同一条 `cluster install` 命令即可（镜像已在节点上，
+加 `--skip-present` 会直接跳过传输）。**不想升级也能立刻解封**——chart 的默认值恰好就是
+`ghcr.io/telepresenceio` + `tel2` + `2.29.0`，与你侧载进节点的镜像完全一致，所以直接用
+telepresence 原生命令安装：
+
+```powershell
+telepresence helm install --namespace ambassador `
+  --set image.pullPolicy=IfNotPresent `
+  --set agent.image.pullPolicy=IfNotPresent
+```
+
+> 用了内部仓库（`--registry`）时，注意 **agent 镜像也必须指向该仓库**：它是由被拦截工作负载的
+> Pod 去拉的，留在公网地址会在拦截时才 ImagePullBackOff。v0.3.6 起 ldbg 自动这样处理。
+
 **节点用密码登录（Windows 上尤其常见）**——Windows 自带的 OpenSSH 既不支持连接复用
 （ControlMaster），密码又只能从终端输入，所以让 ClaudeCode 之类的 AI agent 去跑必然卡住。
 用 ldbg 内置的 SSH 传输层：
@@ -743,7 +779,8 @@ spec: { selector: { app: orders }, ports: [{ name: http, port: 8080, targetPort:
 | 集群内调用目标服务 **connection reset** | ambient 下 istio-cni 与 traffic-agent 争端口。`ldbg up` 已自动打 `dataplane-mode=none`；若用了 `--keep-ambient` 会复现。确认目标 Pod 模板含 `istio.io/dataplane-mode=none`。 |
 | `telepresence connect` 卡住/失败 | 需管理员/UAC；在你自己的 PowerShell（前台）运行，确保能弹出 UAC。 |
 | `telepresence uninstall` 报 workload not found | 连接没 scope 到目标命名空间。先 `telepresence connect -n <ns>`，再 uninstall。 |
-| ImagePull 失败 / manager 起不来 | 镜像未真正侧载，或 `images.registry/agentImage` 未指向已导入镜像；确认 `IfNotPresent` 且镜像在集群可见。重做阶段 B。 |
+| ImagePull 失败 / manager 起不来 | 镜像未真正侧载，或 `image.registry` / `agent.image.registry` 未指向已导入镜像；确认 `IfNotPresent` 且镜像在集群可见。重做阶段 B。 |
+| `values don't meet the specifications of the schema(s)` / `additional properties 'images' not allowed` | ldbg v0.3.5 及以前给 helm 传的是旧版 chart 的取值名，`telepresence-oss` chart 不接受，安装在校验阶段就被拒（**与镜像无关，镜像已经在节点上**）。升级到 v0.3.6 及以上；见下方"阶段 B 故障：helm 取值名"。 |
 | 笔记本无法解析 `*.svc.cluster.local` | `telepresence connect` 未成功，或公司 DNS/VPN 拦截。检查 `telepresence status` 的 DNS/Subnets；必要时 `--also-proxy`/`--mapped-namespaces`。 |
 | 出站被依赖的 L4 AuthorizationPolicy 拒绝 | 实测出站经 traffic-agent 所在 Pod 出去，源表现为目标工作负载 Pod，按调用方鉴权通常可过；若仍被拒，检查该依赖的 PeerAuthentication/AuthorizationPolicy。 |
 | 版本不一致告警 | 让客户端与 manager 同为 2.29.0。 |
