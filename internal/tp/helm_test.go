@@ -97,3 +97,22 @@ func TestSplitImageRef(t *testing.T) {
 		t.Error("an empty reference must be rejected")
 	}
 }
+
+// The chart's default selector excludes kube-system, so managing it must be
+// requestable at install time; the {} list form is helm's strvals syntax for a
+// list value (verified against a live cluster: it renders an In selector).
+func TestHelmSetArgsManagedNamespaces(t *testing.T) {
+	args, err := helmSetArgs(HelmOpts{ManagedNamespaces: []string{"kube-system", "demo"}, PullPolicy: "IfNotPresent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(args, " ")
+	if !strings.Contains(got, "namespaces={kube-system,demo}") {
+		t.Errorf("missing namespaces list in %q", got)
+	}
+	// Unset means unset: the chart's own default selector applies.
+	args, _ = helmSetArgs(HelmOpts{PullPolicy: "IfNotPresent"})
+	if got := strings.Join(args, " "); strings.Contains(got, "namespaces") {
+		t.Errorf("no namespaces value expected: %q", got)
+	}
+}

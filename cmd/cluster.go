@@ -25,6 +25,7 @@ var (
 	clusterNoImport   bool
 	clusterDryRun     bool
 	clusterImportOnly bool
+	clusterManagedNS  []string // chart `namespaces` value; default selector excludes kube-system
 	// preflight keeps its own copy: sharing the variable made cobra re-default
 	// install's --import-via to whichever command registered the flag last.
 	clusterPreflightVia string
@@ -278,10 +279,11 @@ see the exact per-node commands.`,
 			return out.Failf("cluster install", "install the telepresence client or pass --telepresence-bin", errTelepresenceMissing)
 		}
 		hopts := tp.HelmOpts{
-			ManagerNamespace: managerNS(),
-			Registry:         registry,
-			AgentImage:       agentImage,
-			PullPolicy:       "IfNotPresent",
+			ManagerNamespace:  managerNS(),
+			Registry:          registry,
+			AgentImage:        agentImage,
+			PullPolicy:        "IfNotPresent",
+			ManagedNamespaces: clusterManagedNS,
 		}
 		if err := tpc.HelmInstall(ctx, hopts); err != nil {
 			// Re-running install is normal (adding nodes, changing the registry),
@@ -342,6 +344,7 @@ func init() {
 	insF.StringVar(&clusterBundle, "bundle", "tel2-bundle.tar", "transfer bundle produced by 'ldbg bundle'")
 	insF.StringVar(&clusterImportVia, "import-via", "auto", "image import method: auto|registry|ssh|minikube|kind|k3d|ctr")
 	insF.StringVar(&clusterAgentImage, "agent-image", "", "override traffic-agent image (default: same tel2 image)")
+	insF.StringSliceVar(&clusterManagedNS, "managed-namespaces", nil, "namespaces the traffic-manager manages, e.g. kube-system,demo (default: the chart's selector, which EXCLUDES kube-system; mutually exclusive with a custom namespaceSelector)")
 	insF.BoolVar(&clusterNoImport, "no-import", false, "skip image import (already present in the cluster)")
 	insF.BoolVar(&clusterDryRun, "dry-run", false, "print the per-node commands that would run, change nothing")
 	insF.BoolVar(&clusterImportOnly, "import-only", false, "only get the image into the cluster; skip the traffic-manager install")

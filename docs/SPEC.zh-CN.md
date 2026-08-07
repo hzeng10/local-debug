@@ -468,6 +468,42 @@ Java 异常堆栈必须归并为一条记录，关键字能匹配到堆栈帧。
 > （名称形如 `agent-injector-webhook-<命名空间>`）会互相冲突；
 > 并优先选择**未纳入 Istio ambient 网格**的命名空间。
 
+#### FR-E10　traffic-manager 的管辖范围必须可指定、可诊断，且拦截前必须校验
+
+**需求陈述**：安装时必须能指定 traffic-manager 管理哪些命名空间；诊断命令必须能回答
+"manager 是否管理目标命名空间"；发起拦截前必须校验该条件，不满足时立即失败并给出修复命令。
+
+**为什么需要**：这是一次真实故障（2026-08-06）。chart 的默认命名空间选择器是
+`kubernetes.io/metadata.name NotIn [kube-system, kube-node-lease]`——**manager 即使安装在
+kube-system 里，默认也不管理 kube-system**。目标服务恰在 kube-system 时，拦截报
+`namespace "kube-system" is not mapped or is not accessible`，且该报错给出的建议
+（改客户端的 `--mapped-namespaces`）是**无效方向**：注入 webhook 的选择器同样不选该命名空间，
+traffic-agent 根本不会注入，必须修改 manager 侧的管辖范围。客户端连接后的
+`Mapped namespaces`（DNS 与路由可达集合）也跟着管辖集合走。
+
+同一故障还暴露了第二个问题：使用者先手工执行了 `telepresence connect`（未带 `-n`），
+会话 scope 落在 default；`ldbg up` 只检查"是否已连接"，不检查会话的命名空间，
+于是复用了 scope 错误的会话——而拦截与 agent 卸载都按连接所在命名空间解析。
+
+**验收标准**：
+1. `cluster install --managed-namespaces a,b` 映射为 chart 的 `namespaces` 取值
+   （只管列出的命名空间；与 chart 的 namespaceSelector 互斥）；不指定则保持 chart 默认。
+2. 工具能从 manager 的 ConfigMap（`traffic-manager` 中的 `namespace-selector.yaml`）读出
+   管辖选择器，并对目标命名空间的标签求值；ConfigMap 不可读（未安装/无权限）时降级为不检查。
+3. 预检命令新增 `manager-scope` 检查项：管辖 → 通过；不管辖 → 警告并给出两种修复形式；
+   选择器无法解析 → 警告并给出原文。
+4. `up` 在**连接之前**做同一校验（该校验只读 ConfigMap，不需要本机提权），
+   不满足时立即失败，错误信息包含 manager 所在命名空间、选择器原文与修复命令；
+   拦截阶段仍出现 "not mapped" 时（校验被权限降级跳过），错误提示指向同一修复。
+5. `up` 发现已有会话的命名空间与目标不一致时：会话无活跃拦截 → 自动断开并按目标命名空间重连；
+   有活跃拦截 → 明确拒绝（不得拆除进行中的工作）。
+
+**实现状态**：已实现（v0.3.8）。真机验证：默认选择器下 `doctor -n kube-system` 警告、
+`-n demo` 通过；`up` 对 kube-system 内服务在连接前快速失败（错误含选择器原文）；
+`--managed-namespaces kube-system,demo` 安装后 ConfigMap 选择器为 `In [kube-system, demo]`
+且 `doctor -n kube-system` 转为通过。会话 scope 守卫以单元测试覆盖
+（三种情形：一致复用 / 不一致且空闲重连 / 不一致且有活跃拦截拒绝）。
+
 ### 4.F 组：面向 AI 编码代理的可驱动性
 
 #### FR-F1　统一的结构化输出
@@ -694,6 +730,7 @@ Java 异常堆栈必须归并为一条记录，关键字能匹配到堆栈帧。
 | `--sudo` | 开启 | 节点上的加载命令使用超级用户权限执行 |
 | `--remote-tmp` | `/tmp` | 节点上暂存归档的目录 |
 | `--runtime` | 空 | 强制指定全部节点的容器运行时（`docker`、`containerd`、`cri-o` 之一）；不指定时从集群读取，识别不出则在节点上探测（见 FR-E7） |
+| `--managed-namespaces` | 空 | traffic-manager 管理的命名空间列表（chart 的 `namespaces` 取值，只管列出的；与 namespaceSelector 互斥）。默认选择器**不含 kube-system**——目标服务在 kube-system 时必须指定（见 FR-E10） |
 | `--import-cmd` | 空 | 自定义加载命令，其中 `%s` 会被替换为归档路径 |
 | `--keep-remote` | 关闭 | 保留节点上的临时归档 |
 | `--skip-present` | 关闭 | 镜像已存在的节点直接跳过 |
@@ -749,6 +786,10 @@ Java 异常堆栈必须归并为一条记录，关键字能匹配到堆栈帧。
       注入 agent 的镜像环境变量指向已侧载/已推送的位置。
 - [ ] 指定非默认的 manager 命名空间后：安装到该命名空间成功，预检在该命名空间找到 Pod，
       `logs --manager` 能读到日志；不指定时预检对空的默认命名空间给出告警。
+- [ ] 目标命名空间不在 manager 管辖范围内时：`doctor` 的 `manager-scope` 项给出警告与修复命令；
+      `up` 在连接前快速失败，错误含选择器原文。
+- [ ] `--managed-namespaces` 安装后，manager 的 ConfigMap 选择器为对应的 `In` 列表，
+      此前无法拦截的命名空间转为可管辖。
 
 **AI 编码代理可驱动性**
 - [ ] 在无终端环境中，设置密码环境变量后可完成整套导入流程，无任何交互。

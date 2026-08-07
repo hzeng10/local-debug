@@ -511,6 +511,8 @@ telepresence uninstall gde-adapter
 | `sync` / `up` 报 forbidden（读 ConfigMap/Secret） | RBAC 不足 | 对照 §1.3；`sync` 必须能 get 该工作负载引用的所有 CM/Secret |
 | `ldbg test` 失败但本地进程明明收到了请求 | `kube-system` 不允许建临时 Pod（PSA/准入） | 用 §3 第 5 步的替代验证；不必强求 `test` 通过 |
 | `ldbg logs query` 查不到任何记录 | 日志栈没部署，或采集未覆盖 `kube-system`，或地址解析不到 | 先看 `ldbg doctor` 的 `log-store` / `log-collection`；必要时 `--vlogs-addr http://127.0.0.1:9428`；拦截期间改用 `ldbg logs local` |
+| `namespace "kube-system" is not mapped or is not accessible` | traffic-manager 不管辖 kube-system（chart 默认选择器就把 kube-system 排除在外，哪怕 manager 本身装在 kube-system） | 让集群管理员扩 manager 管辖范围：`telepresence helm upgrade --namespace <manager命名空间> --set "namespaces={kube-system}"`，或重装时用 `ldbg cluster install --managed-namespaces kube-system`；然后 `telepresence quit` 再重跑 `ldbg up`。`ldbg doctor gde-adapter -n kube-system` 的 `manager-scope` 一项能提前查出 |
+| `ldbg up` 复用了不对的连接 | 之前手工跑过 `telepresence connect`（未带 `-n`），会话 scope 停在 default | 不要自己先 connect——直接 `ldbg up`，它会带上正确的 `-n` 与 `--manager-namespace`；遇到 scope 不匹配且无活跃拦截时会自动断开重连 |
 | 拦截建立了但集群流量没过来 | 客户端与集群 traffic-manager 版本不一致 | `telepresence version` 与 `kubectl -n ambassador get deploy traffic-manager -o jsonpath='{..image}'` 对齐（本工具锁定 2.29.0） |
 | `ldbg down` 后 agent 还在 | `telepresence uninstall` 按已连接命名空间解析，连错了删不掉 | `telepresence connect -n kube-system` 后 `telepresence uninstall gde-adapter` |
 

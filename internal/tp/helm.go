@@ -12,11 +12,16 @@ import (
 // reaches out: the OSS image ghcr.io/telepresenceio/tel2:<ver> serves BOTH the
 // traffic-manager and the injected traffic-agent.
 type HelmOpts struct {
-	ManagerNamespace string   // default "ambassador"
-	Registry         string   // registry path holding the tel2 image
-	AgentImage       string   // full reference for the injected traffic-agent
-	PullPolicy       string   // e.g. "IfNotPresent" for air-gap
-	Sets             []string // extra raw --set a=b
+	ManagerNamespace string // default "ambassador"
+	Registry         string // registry path holding the tel2 image
+	AgentImage       string // full reference for the injected traffic-agent
+	PullPolicy       string // e.g. "IfNotPresent" for air-gap
+	// ManagedNamespaces limits which namespaces the manager manages (the chart's
+	// `namespaces` value, mutually exclusive with its namespaceSelector). It
+	// exists because the chart's DEFAULT selector excludes kube-system — a
+	// service there cannot be intercepted unless the scope says otherwise.
+	ManagedNamespaces []string
+	Sets              []string // extra raw --set a=b
 }
 
 // HelmInstall runs `telepresence helm install` from the embedded chart. No cluster
@@ -93,6 +98,10 @@ func helmSetArgs(o HelmOpts) ([]string, error) {
 	}
 	if o.PullPolicy != "" {
 		add("agent.image.pullPolicy=" + o.PullPolicy)
+	}
+
+	if len(o.ManagedNamespaces) > 0 {
+		add("namespaces={" + strings.Join(o.ManagedNamespaces, ",") + "}")
 	}
 
 	for _, s := range o.Sets {

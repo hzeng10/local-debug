@@ -791,6 +791,8 @@ spec: { selector: { app: orders }, ports: [{ name: http, port: 8080, targetPort:
 
 | 现象 | 处理 |
 |------|------|
+| `CreateIntercept: namespace "X" is not mapped or is not accessible` | **traffic-manager 不管辖目标命名空间**。chart 的默认选择器是 `kubernetes.io/metadata.name NotIn [kube-system, kube-node-lease]`——manager 即使**装在** kube-system 也**不管理** kube-system，`telepresence status` 的 `Mapped namespaces` 列表里会恰好缺它。修复：扩 manager 管辖范围（`telepresence helm upgrade --namespace <manager命名空间> --set "namespaces={kube-system}"`，或改 namespaceSelector；或重装时用 `ldbg cluster install --managed-namespaces kube-system`），然后 `telepresence quit` 丢弃旧会话再 `ldbg up`。注意**不要**按报错提示去改客户端的 `--mapped-namespaces`——注入 webhook 同样不选该命名空间，agent 根本不会注入。v0.3.8 起 `ldbg doctor` 的 `manager-scope` 检查项和 `ldbg up` 的预检会在拦截前直接指出这个问题。 |
+| `ldbg up` 前手工跑过 `telepresence connect`（未带 `-n`），拦截失败 | 会话 scope 落在 default，而拦截与 agent 卸载都按**连接所在命名空间**解析。v0.3.8 起 `ldbg up` 检测到 scope 不匹配且无活跃拦截时会自动 quit 重连；老版本请 `telepresence quit` 后直接 `ldbg up`（让 ldbg 自己连，别先手工 connect）。 |
 | 集群内调用目标服务 **connection reset** | ambient 下 istio-cni 与 traffic-agent 争端口。`ldbg up` 已自动打 `dataplane-mode=none`；若用了 `--keep-ambient` 会复现。确认目标 Pod 模板含 `istio.io/dataplane-mode=none`。 |
 | `telepresence connect` 卡住/失败 | 需管理员/UAC；在你自己的 PowerShell（前台）运行，确保能弹出 UAC。 |
 | `telepresence uninstall` 报 workload not found | 连接没 scope 到目标命名空间。先 `telepresence connect -n <ns>`，再 uninstall。 |

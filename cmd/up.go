@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hzeng10/local-debug/internal/k8s"
@@ -83,13 +84,41 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 				fmt.Errorf("could not derive a port for %q; no Service port found", target))
 		}
 
-		// 3) Ensure telepresence is connected.
+		// 3) The manager must MANAGE the target namespace, not merely exist: the
+		// chart's default selector excludes kube-system, so a service there is
+		// un-interceptable until the manager's scope says otherwise. Checking
+		// before connect turns telepresence's late "namespace is not mapped"
+		// into an immediate, explainable failure — and needs no elevation, so an
+		// agent gets the diagnosis even where connect would stall on sudo.
+		// Unreadable scope (RBAC, no manager) skips the check.
+		if scope, serr := cl.ManagerScopeFor(ctx, managerNS(), ns); serr == nil && scope.Found && !scope.Manages {
+			return out.Failf("up", scopeHint(ns),
+				fmt.Errorf("the traffic-manager in namespace %q does not manage namespace %q — its selector is:\n%s", managerNS(), ns, strings.TrimSpace(scope.SelectorYAML)))
+		}
+
+		// 4) Ensure telepresence is connected.
 		tpc := newTPClient()
 		if !tpc.Available() {
 			return out.Failf("up", "install telepresence or pass --telepresence-bin", errTelepresenceMissing)
 		}
 		st, _ := tpc.Status(ctx)
 		connected := st != nil && st.Connected
+		if connected {
+			// An existing session scoped to another namespace is a trap, not a
+			// convenience: the intercept (and down's agent uninstall) resolve in
+			// the CONNECTED namespace, so reusing it fails in confusing ways.
+			reconnect, serr := sessionAction(st, ns)
+			if serr != nil {
+				return out.Failf("up", "finish or 'ldbg down' the other session first, or run 'telepresence quit' yourself", serr)
+			}
+			if reconnect {
+				out.Info("… existing session is scoped to namespace %q, target is %q — reconnecting", st.Namespace, ns)
+				if qerr := tpc.Quit(ctx, false); qerr != nil {
+					return out.Failf("up", "run 'telepresence quit' yourself, then re-run 'ldbg up'", qerr)
+				}
+				connected = false
+			}
+		}
 		if !connected {
 			out.Info("… connecting to cluster (telepresence connect)")
 			// Scope the connection to the target namespace so `down` can uninstall the
@@ -109,7 +138,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 			Port:         port, LocalPort: localPortOf(port), Connected: connected, InterceptActive: true,
 		}
 
-		// 4) Ambient handling. An intercepted ambient workload gets its port black-holed
+		// 5) Ambient handling. An intercepted ambient workload gets its port black-holed
 		// by the istio-cni/traffic-agent conflict; exclude it from ambient first.
 		nsMode, _ := cl.NamespaceDataplaneMode(ctx, ns)
 		assessment := mesh.AssessWorkload(nsMode, wl.PodTemplateDataplaneMode())
@@ -130,7 +159,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 			out.Info("! ambient: %q stays in ambient (--keep-ambient); in-cluster callers may see connection resets", target)
 		}
 
-		// 5) Global intercept (full takeover).
+		// 6) Global intercept (full takeover).
 		mount := "false"
 		if !upNoMount {
 			mount = "false" // default off; file-mounted secrets handled in a later phase
@@ -138,7 +167,12 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 		if ierr := tpc.Intercept(ctx, tp.InterceptOpts{
 			Name: target, Namespace: ns, Port: port, EnvFile: sync.EnvFile, Mount: mount,
 		}); ierr != nil {
-			return out.Failf("up", "is the namespace correct? is another intercept already active?", ierr)
+			hint := "is the namespace correct? is another intercept already active?"
+			if strings.Contains(ierr.Error(), "not mapped") {
+				// The scope preflight was skipped (RBAC) or raced: same diagnosis.
+				hint = scopeHint(ns) + "; also run 'telepresence quit' so the session reconnects with the new scope"
+			}
+			return out.Failf("up", hint, ierr)
 		}
 		out.Info("✓ global intercept active — cluster traffic to %q now routes to your laptop", target)
 
@@ -146,7 +180,7 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 			emitRunConfig(upRunConfig, target, sync.EnvFile)
 		}
 
-		// 6) Optionally launch the local app with the synced env.
+		// 7) Optionally launch the local app with the synced env.
 		if len(upRun) > 0 {
 			res.Launched = true
 			out.Result("up", upHumanLaunching(res), res)
@@ -156,6 +190,28 @@ java -jar) — or pass --run to have ldbg launch it for you with the synced env.
 		out.Result("up", upHumanNextSteps(res), res)
 		return nil
 	},
+}
+
+// sessionAction decides what to do with an existing telepresence session when
+// the target namespace differs from the session's scope: reconnect when the
+// session is idle, refuse when it carries live intercepts (quitting would tear
+// down work in progress — possibly not even ours).
+func sessionAction(st *tp.Status, ns string) (reconnect bool, err error) {
+	if st.Namespace == "" || st.Namespace == ns {
+		return false, nil
+	}
+	if len(st.Intercepts) > 0 {
+		return false, fmt.Errorf("connected to namespace %q with %d active intercept(s), but the target is in %q",
+			st.Namespace, len(st.Intercepts), ns)
+	}
+	return true, nil
+}
+
+// scopeHint is the fix for "the manager does not manage this namespace" — both
+// forms, because they are mutually exclusive in the chart.
+func scopeHint(ns string) string {
+	return fmt.Sprintf("widen the traffic-manager's scope: telepresence helm upgrade --namespace %s --set \"namespaces={%s}\" (manages ONLY the listed namespaces), or a namespaceSelector that includes %q — or reinstall with 'ldbg cluster install --managed-namespaces %s'",
+		managerNS(), ns, ns, ns)
 }
 
 // derivePort builds "<local>:<identifier>" from the workload's first Service port,

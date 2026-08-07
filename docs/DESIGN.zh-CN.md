@@ -21,7 +21,7 @@
 | 把镜像送进集群（`ldbg cluster install`）的设计 | 本文档 §16 |
 | 笔记本无法直连集群时的接入方式 | 本文档 §17 |
 | 为什么某些地方是为 AI 编码代理专门设计的 | 本文档 §18 |
-| 所有关键决策及其理由（含踩过的坑） | 本文档 §4（D1–D8）与 §19（D9–D25） |
+| 所有关键决策及其理由（含踩过的坑） | 本文档 §4（D1–D8）与 §19（D9–D26） |
 | 怎么操作（面向使用者） | [`GUIDE.debug-service.zh-CN.md`](GUIDE.debug-service.zh-CN.md)、[`SETUP.zh-CN.md`](SETUP.zh-CN.md)、[`RUNBOOK.windows-remote.zh-CN.md`](RUNBOOK.windows-remote.zh-CN.md) |
 
 ---
@@ -737,6 +737,36 @@ chart 实际声明的一致**：`telepresence-oss` chart（2.29.0）的取值定
 用了覆盖值时提示"检查命名空间或去掉覆盖"，用默认值时提示"先安装，或指定其它命名空间"。
 这样配错在预检阶段就能看见，而不是变成一次难懂的连接失败。
 
+### 16.9 manager 的管辖范围：住在哪里 ≠ 管理哪里（v0.3.8）
+
+真实故障（2026-08-06）：manager 安装在 kube-system，目标服务也在 kube-system，
+拦截却报 `namespace "kube-system" is not mapped or is not accessible`。因果链是：
+
+1. chart 的**默认**命名空间选择器为 `kubernetes.io/metadata.name NotIn [kube-system,
+   kube-node-lease]`——manager **住在** kube-system 也**不管理** kube-system。
+2. manager 把选择器写进自己的 ConfigMap（`traffic-manager` 的 `namespace-selector.yaml`），
+   注入 webhook 的 namespaceSelector 与之一致；客户端连接时把管辖集合作为
+   `Mapped namespaces`（域名解析与路由的可达集合）。
+3. 于是不在管辖范围内的命名空间：客户端拒绝创建拦截，webhook 也不会注入 traffic-agent。
+   **报错建议的 `--mapped-namespaces` 是无效方向**——那只是客户端侧的映射，
+   必须修改 manager 侧的管辖范围。
+
+设计响应（三处，均以"从 manager 的 ConfigMap 读选择器、对目标命名空间标签求值"
+这一个能力为核心，`internal/k8s/managerscope.go`）：
+
+1. **安装时可声明**：`cluster install --managed-namespaces a,b` → chart 的 `namespaces` 取值。
+   帮助与文档写明"只管列出的"与互斥关系；文档同时给出选择器形式（全集群减 kube-node-lease）
+   并说明取舍——`Mapped namespaces` 跟着管辖集合走，列表选窄了会断掉其它命名空间里依赖的解析。
+2. **预检可诊断**：`doctor` 的 `manager-scope` 检查项直接回答"管不管目标命名空间"。
+3. **拦截前必校验**：`up` 在**连接之前**做同一检查（只读 ConfigMap，不需要本机提权——
+   agent 在无法完成 sudo 的环境里也能拿到诊断），失败信息带选择器原文与修复命令。
+   ConfigMap 读不到（未安装/无权限）则降级放行，由拦截阶段的 "not mapped" 提示兜底。
+
+**会话 scope 守卫**（同一故障的次因）：使用者手工 `telepresence connect` 未带 `-n`，
+会话 scope 落在 default，而 `up` 原来只检查"是否已连接"。现在不一致时：
+会话**无活跃拦截 → 自动 quit 并按目标命名空间重连**（幂等、agent 友好）；
+**有活跃拦截 → 拒绝**——那可能是别人正在进行的调试，工具不拆进行中的工作。
+
 ## 17. 远程接入设计
 
 ### 17.1 前提事实
@@ -812,7 +842,7 @@ Telepresence 通过**集群应用程序接口的端口转发**到达 traffic-man
 对集群节点执行特权命令前，可以先打印**将要执行的确切命令**而不做任何改动。
 这既满足管理员的审阅需求，也让代理可以把计划摊给人类确认后再执行。
 
-## 19. 关键设计决策（D9–D25）
+## 19. 关键设计决策（D9–D26）
 
 | 编号 | 决策点 | 结论 | 理由 |
 | --- | --- | --- | --- |
@@ -833,6 +863,7 @@ Telepresence 通过**集群应用程序接口的端口转发**到达 traffic-man
 | D23 | kubelet 上报非标准运行时字符串 | **不再直接拒绝**：可 `--runtime` 强制指定，零参数时在节点上探测实际引擎（docker 优先），原始字符串始终展示 | 节点已经可以登录时，探测的成本只是一条远程命令，放弃是错误的默认；docker 优先是因为非标准上报几乎都来自 docker 分支，且 docker 自带受它管理的 containerd，先探测 `ctr` 会把镜像装进 kubelet 不看的地方（详见 §16.3.1） |
 | D24 | 安装参数与 agent 镜像落点 | 按 chart 实际声明的取值名下发（`image.*` 与 `agent.image.*`，后者拆成三段），并让 agent 镜像默认跟随镜像实际被推送到的位置 | chart 的取值定义不允许未声明的属性，名字错一处就整批被拒、安装不执行；agent 由被拦截工作负载的 Pod 拉取，指向公网会在拦截时才失败（详见 §16.7） |
 | D25 | traffic-manager 命名空间 | 由编译期常量改为全局参数 + 环境变量，**四个使用点共用一个解析函数**，并新增预检项直接查该命名空间里的 Pod | 共享集群未必允许使用 `ambassador`；而连接参数会覆盖客户端配置，漏改一处就会连到没有 manager 的命名空间；引入旋钮就要同时引入它的诊断手段（详见 §16.8） |
+| D26 | manager 管辖范围与会话 scope | 安装可声明（`--managed-namespaces`）、预检可诊断（`manager-scope`）、拦截前必校验（连接之前、无需提权）；会话 scope 不匹配时空闲即自动重连、有活跃拦截即拒绝 | chart 默认选择器排除 kube-system，"住在哪里"与"管理哪里"是两件事；报错建议的客户端映射是无效方向，必须改 manager 侧；工具不拆进行中的调试会话（详见 §16.9） |
 
 ## 20. 附录：完整命令面
 

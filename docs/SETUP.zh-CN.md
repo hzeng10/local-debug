@@ -246,6 +246,43 @@ ldbg up gde-adapter -n kube-system
 > manager 所在命名空间不在网格内；若它带了 `istio.io/dataplane-mode=ambient` 标签，
 > manager 的流量会经过 ztunnel，属于未验证路径。
 
+### 4.3 manager 的"管辖范围"：要调试 kube-system 里的服务必须显式声明
+
+manager **装在哪个命名空间**（§4.2）和它**管理哪些命名空间**是两件事。chart 的默认
+命名空间选择器是 `kubernetes.io/metadata.name NotIn [kube-system, kube-node-lease]`——
+即**默认管理除 kube-system 之外的所有命名空间，manager 自己住在 kube-system 也不例外**。
+不在管辖范围内的命名空间无法拦截：客户端报
+`namespace "X" is not mapped or is not accessible`，且注入 webhook 也不会对它生效
+（所以按报错提示改客户端 `--mapped-namespaces` 是无效的，必须改 manager 侧）。
+
+目标服务在 kube-system（或其它被排除的命名空间）时，安装就要声明管辖范围：
+
+```bash
+ldbg cluster install --bundle tel2-bundle.tar --ssh-user root --managed-namespaces kube-system
+# 多个：--managed-namespaces kube-system,demo
+```
+
+`--managed-namespaces` 对应 chart 的 `namespaces` 取值（**只管列出的命名空间**，
+与 chart 的 namespaceSelector 互斥）。要"全集群都管、包括 kube-system"，
+则用选择器形式（把默认排除项缩到只剩 kube-node-lease）：
+
+```bash
+telepresence helm upgrade --namespace <manager命名空间> \
+  --set namespaceSelector.matchExpressions[0].key=kubernetes.io/metadata.name \
+  --set namespaceSelector.matchExpressions[0].operator=NotIn \
+  --set "namespaceSelector.matchExpressions[0].values={kube-node-lease}" \
+  --set image.pullPolicy=IfNotPresent --set agent.image.pullPolicy=IfNotPresent
+```
+
+> **选窄还是选宽**：客户端连接后的 `Mapped namespaces`（DNS/路由可达的命名空间）跟着
+> 管辖集合走。目标服务的依赖（数据库、消息队列、对端服务）散布在其它命名空间时，
+> 用列表形式要把它们所在的命名空间一并列入，否则本机进程解析不到它们；拿不准就用宽版。
+> 改完管辖范围后执行 `telepresence quit` 丢弃旧会话——映射列表是连接时算好的。
+
+诊断入口：`ldbg doctor <服务> -n <命名空间>` 的 `manager-scope` 检查项直接回答
+"manager 管不管这个命名空间"；`ldbg up` 也会在连接前做同一检查并快速失败，
+错误里带 manager 当前选择器的原文与修复命令。
+
 ---
 
 ## 5. 日常调试流程（每次，"只在笔记本上启动并调试"）

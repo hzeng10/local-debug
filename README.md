@@ -123,6 +123,12 @@ ldbg cluster install --bundle tel2-bundle.tar --import-via minikube       # 单�
 telepresence 客户端配置里的设置，不一致就会连到一个没有 manager 的命名空间；`ldbg doctor` 的
 `manager-namespace` 检查项就是查这个。换命名空间前先卸载旧的 manager。
 
+**manager 管理哪些命名空间是另一件事**：chart 默认选择器**排除 kube-system**——目标服务在
+kube-system 时拦截会报 `namespace is not mapped`，装的时候要加
+`--managed-namespaces kube-system`（只管列出的命名空间；依赖散布在别的命名空间时一并列入）。
+`ldbg doctor <服务> -n <命名空间>` 的 `manager-scope` 检查项与 `ldbg up` 的连接前预检都会
+直接指出这个问题。
+
 **节点运行时不用指定**：`ldbg` 从集群的 `containerRuntimeVersion` 读出来，按节点自动选
 containerd → `ctr -n k8s.io images import`（k3s/RKE2 自动用 `k3s ctr`）、docker → `docker load`、
 cri-o → `podman load`，导入后逐节点校验并清理临时文件。仓库推送同样**无需本机 Docker**。

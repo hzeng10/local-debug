@@ -77,6 +77,25 @@ reachability + RBAC, traffic-manager installed, and Istio ambient detection. Giv
 				}
 				add("manager-namespace", "warn", detail)
 			}
+
+			// Existing is not enough — the manager must MANAGE the target
+			// namespace. The chart's default selector excludes kube-system, so a
+			// service there is un-interceptable until the scope says otherwise
+			// (that failure otherwise surfaces late, as "namespace is not mapped").
+			ns := flagNamespace
+			if ns == "" {
+				ns = cl.DefaultNamespace()
+			}
+			if scope, serr := cl.ManagerScopeFor(ctx, mns, ns); serr != nil {
+				add("manager-scope", "warn", fmt.Sprintf("could not evaluate the manager's namespace selector: %v", serr))
+			} else if scope.Found {
+				if scope.Manages {
+					add("manager-scope", "pass", fmt.Sprintf("the traffic-manager manages namespace %q", ns))
+				} else {
+					add("manager-scope", "warn", fmt.Sprintf(
+						"the traffic-manager does NOT manage namespace %q — intercepts there will fail with \"namespace is not mapped\"; %s", ns, scopeHint(ns)))
+				}
+			}
 		}
 
 		// 4) Connection + traffic-manager (best-effort; needs the daemon).
