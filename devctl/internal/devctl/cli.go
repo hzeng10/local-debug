@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var Version = "0.2.0"
+var Version = "0.2.1"
 
 const usage = `devctl: Windows local JVM -> shared Kubernetes dependencies
 

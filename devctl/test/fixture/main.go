@@ -8,10 +8,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 func main() {
+	if os.Getenv("DEVCTL_TEST_PREPARE_FIXTURE") == "1" {
+		env := map[string]string{}
+		for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
+			env[name] = os.Getenv(name)
+		}
+		exe, _ := os.Executable()
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"args": os.Args[1:], "env": env, "exe": exe})
+		code, _ := strconv.Atoi(os.Getenv("DEVCTL_TEST_EXIT"))
+		os.Exit(code)
+	}
+
 	args := os.Args[1:]
 	base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 	switch base {

@@ -49,6 +49,51 @@ Copy-Item .\examples\admin\bundle.json .\examples\admin\bundle.local.json
 .\dist\devctl-windows-amd64.exe bundle verify --bundle .\.offline\bundle --format json
 ```
 
+### 3.1 PowerShell 代理
+
+在运行脚本的**同一个 PowerShell 窗口**设置进程环境变量。`$HTTPS_PROXY = ...` 是普通 PowerShell 变量，子进程不会继承；`setx` 设置的是后续新进程的环境，也不会更新当前窗口。请使用 `$env:` 写法（[Microsoft 环境变量说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables)）。
+
+```powershell
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = $env:HTTP_PROXY
+$env:NO_PROXY = 'localhost,127.0.0.1,::1,.corp.example'
+.\scripts\prepare-offline.ps1 -Config .\examples\admin\bundle.local.json
+```
+
+端口替换为代理实际的 HTTP / mixed 监听端口。`HTTPS_PROXY` 表示访问 HTTPS 目标时使用的代理，值通常仍是 `http://...`，通过 CONNECT 建立 TLS 隧道；只有代理监听端口本身支持 TLS 时才写 `https://...`。SOCKS 端口须写 `socks5://...`，不要把 SOCKS 端口当作 HTTP 端口。
+
+脚本读取当前进程的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`（兼容小写），修剪首尾空白，为 `host:port` 补 `http://`；只设置 HTTP_PROXY 时将其用于 HTTPS。devctl 与下载镜像/Chart 的 crane 继承同一组变量。脚本结束或失败后恢复当前窗口原来的代理环境。直接调用 devctl 时遵循 [Go 标准代理规则](https://pkg.go.dev/net/http#ProxyFromEnvironment)，HTTPS 下载请明确设置 HTTPS_PROXY。
+
+也可显式指定本次脚本的代理；`-Proxy` 优先于环境变量。`-NoProxy` 可覆盖旁路列表，传空字符串表示本次不使用环境中的旁路列表（Go 仍默认直连 localhost/回环地址）：
+
+```powershell
+.\scripts\prepare-offline.ps1 -Config .\examples\admin\bundle.local.json -Proxy 'http://127.0.0.1:7890' -NoProxy ''
+```
+
+认证代理支持 `用户名:密码@主机:端口`：
+
+```powershell
+.\scripts\prepare-offline.ps1 `
+  -Config .\examples\admin\bundle.local.json `
+  -Proxy 'http://myuser:mypassword@proxy.example.com:8080'
+```
+
+将端口替换为实际值；HTTP 代理省略端口时默认使用 80。用户名或密码包含 `@`、`#`、`%` 等特殊字符时，先分别 URL 编码，再拼接 URL，例如：
+
+```powershell
+$proxyUser = [Uri]::EscapeDataString('myuser')
+$proxyPassword = [Uri]::EscapeDataString('p@ss:word#')
+$proxyUrl = 'http://{0}:{1}@proxy.example.com:8080' -f $proxyUser, $proxyPassword
+.\scripts\prepare-offline.ps1 -Config .\examples\admin\bundle.local.json -Proxy $proxyUrl
+```
+
+默认优先使用交付包根目录 `devctl.exe`，其次使用源码 `dist/` 对应 Windows 架构程序，最后查 PATH；`-Devctl` 可以显式指定。更新时请同时替换脚本和程序。脚本会在 stderr 输出实际程序路径及代理端点，下载器会输出每次请求（包括重定向）的目标主机和 `via proxy` / `via direct`；stdout 保持 JSON，日志不打印代理用户名、密码或签名下载 URL。
+
+- 显示 `via direct`：检查 `$env:` 是否设置在当前窗口、HTTPS_PROXY 是否为空，及 NO_PROXY 是否含 `*`、github.com、其 API/CDN 或镜像仓库域名。
+- 显示 `via proxy` 仍失败：检查端口和协议。`407` 表示代理要求认证，`connection refused` 表示代理端点未接受连接；证书错误需要正确安装企业 CA，程序不会跳过 TLS 校验。
+- GitHub 下载可能重定向到其他资产域名；还需要访问 api.github.com、ghcr.io、Docker Hub，以及 JSON 中其他下载站点，不能只放通 github.com 首页。
+- 脚本不自动读取浏览器代理/PAC，也不会把本机代理变量部署到离线节点。失败重试时按下述规则使用空输出目录，已有校验下载缓存可保留。
+
 准备结果为目录：`bin/`、`charts/`、`images/`、`deploy/`、`docs/`、`examples/`、`scripts/`、`bundle.lock.json`、`SHA256SUMS`。公共包不应放 SSH 私钥、kubeconfig、仓库密码或业务 Secret。
 
 只接受 HTTPS 下载，校验官方 checksum、GitHub asset digest 或显式配置的 SHA256；若上游未提供可用摘要，停止并要求配置可信摘要。生成本地 SHA256 不等于验证上游真实性。传入内网后可再次执行 `bundle verify`。

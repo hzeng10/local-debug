@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func fetch(ctx context.Context, u string, w io.Writer) error {
+func fetch(ctx context.Context, u string, w io.Writer, log io.Writer) error {
 	parsed, e := url.Parse(u)
 	if e != nil || parsed.Scheme != "https" || parsed.User != nil {
 		return fmt.Errorf("download requires HTTPS without inline credentials")
@@ -33,15 +34,38 @@ func fetch(ctx context.Context, u string, w io.Writer) error {
 		return e
 	}
 	req.Header.Set("User-Agent", "devctl-offline/0.2")
-	client := http.Client{Timeout: 10 * time.Minute, CheckRedirect: func(r *http.Request, v []*http.Request) error {
-		if len(v) > 8 || r.URL.Scheme != "https" {
+	// Clone so diagnostics do not mutate the shared transport. The standard
+	// selector honors HTTP(S)_PROXY, lowercase equivalents and NO_PROXY for
+	// every request, including a release asset's redirected CDN hostname.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = func(r *http.Request) (*url.URL, error) {
+		proxy, err := http.ProxyFromEnvironment(r)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy environment; check HTTP_PROXY/HTTPS_PROXY")
+		}
+		route := "direct (no matching proxy, NO_PROXY bypass, or loopback)"
+		if proxy != nil {
+			// Neither proxy userinfo nor signed download URLs belong in logs.
+			route = "proxy " + proxy.Scheme + "://" + proxy.Host
+		}
+		fmt.Fprintf(log, "download %s via %s\n", r.URL.Host, route)
+		return proxy, nil
+	}
+	defer transport.CloseIdleConnections()
+	client := http.Client{Transport: transport, Timeout: 10 * time.Minute, CheckRedirect: func(r *http.Request, v []*http.Request) error {
+		if len(v) > 8 || r.URL.Scheme != "https" || r.URL.User != nil {
 			return fmt.Errorf("unsafe download redirect")
 		}
 		return nil
 	}}
 	resp, e := client.Do(req)
 	if e != nil {
-		return e
+		// url.Error may contain signed redirect URLs; keep the underlying cause.
+		var ue *url.Error
+		if errors.As(e, &ue) {
+			e = ue.Err
+		}
+		return fmt.Errorf("download %s failed: %v; check the route above, HTTP(S)_PROXY / NO_PROXY, proxy port/protocol and trusted CA certificates (HTTPS_PROXY commonly uses http://)", parsed.Host, e)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -50,14 +74,14 @@ func fetch(ctx context.Context, u string, w io.Writer) error {
 	_, e = io.Copy(w, resp.Body)
 	return e
 }
-func fetchBytes(ctx context.Context, u string) ([]byte, error) {
+func fetchBytes(ctx context.Context, u string, log io.Writer) ([]byte, error) {
 	var b bytes.Buffer
-	e := fetch(ctx, u, &b)
+	e := fetch(ctx, u, &b, log)
 	return b.Bytes(), e
 }
-func resolveArtifact(ctx context.Context, a Artifact) (Artifact, error) {
+func resolveArtifact(ctx context.Context, a Artifact, log io.Writer) (Artifact, error) {
 	if a.HelmIndexURL != "" {
-		b, e := fetchBytes(ctx, a.HelmIndexURL)
+		b, e := fetchBytes(ctx, a.HelmIndexURL, log)
 		if e != nil {
 			return a, e
 		}
@@ -90,7 +114,7 @@ func resolveArtifact(ctx context.Context, a Artifact) (Artifact, error) {
 		}
 	}
 	if a.SHA256 == "" && a.GitHubAssetAPI != "" {
-		b, e := fetchBytes(ctx, a.GitHubAssetAPI)
+		b, e := fetchBytes(ctx, a.GitHubAssetAPI, log)
 		if e != nil {
 			return a, e
 		}
@@ -111,7 +135,7 @@ func resolveArtifact(ctx context.Context, a Artifact) (Artifact, error) {
 		}
 	}
 	if a.SHA256 == "" && a.ChecksumURL != "" {
-		b, e := fetchBytes(ctx, a.ChecksumURL)
+		b, e := fetchBytes(ctx, a.ChecksumURL, log)
 		if e != nil {
 			return a, e
 		}
@@ -309,7 +333,7 @@ func BundlePrepare(ctx context.Context, path string, r Runner, log io.Writer) (L
 				return lock, fmt.Errorf("local artifact %s requires sha256", a.ID)
 			}
 		} else {
-			a, e = resolveArtifact(ctx, a)
+			a, e = resolveArtifact(ctx, a, log)
 			if e != nil {
 				return lock, e
 			}
@@ -321,7 +345,7 @@ func BundlePrepare(ctx context.Context, path string, r Runner, log io.Writer) (L
 				if e != nil {
 					return lock, e
 				}
-				e = fetch(ctx, a.URL, f)
+				e = fetch(ctx, a.URL, f, log)
 				ce := f.Close()
 				if e == nil {
 					e = ce
