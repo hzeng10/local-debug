@@ -1,0 +1,30 @@
+# Admin supplies the existing namespace using helm --namespace. No Namespace objects.
+name: dev-egress
+image: "" # Required: internal registry image pinned with @sha256:...
+imagePullSecrets: []
+replicas: 1
+authSecret: dev-egress-auth # Pre-created Secret: users.json and key.pem
+ambient: true
+telepresence:
+  enabled: false # Only the dedicated shared egress Pod receives an Agent.
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+# Set to the names already present in your cluster. These grant GET on named objects only.
+readAccess:
+  namespace: ""
+  deployments: []
+  configMaps: []
+  secrets: []
+developerGroups: []
+# Required egress rules: DNS + permitted business/middleware destinations.
+# Include DNS TCP 53 (the client uses a TCP DNS tunnel).
+egress: []
+# Optional addition when the existing business policies require an explicit development identity.
+# Existing DENY policies take precedence. targetRefs policies/waypoints require separate review.
+businessAuthorization:
+  enabled: false
+  namespace: ""
+  selector: {}
+  ports: []
+trustDomain: cluster.local

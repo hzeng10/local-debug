@@ -1,0 +1,47 @@
+# Admin overlay for Telepresence OSS 2.31.0, installed from an offline Chart archive.
+# Review the rendered upstream Chart before installing into an EXISTING namespace.
+image:
+  registry: registry.internal.example/telepresenceio
+  name: tel2
+  tag: 2.31.0
+agent:
+  # Shared tunnel credentials must never be exported by an attached Traffic Agent.
+  mountPolicies:
+    credentials: Ignore
+    /credentials: Ignore
+  image:
+    registry: registry.internal.example/telepresenceio
+    name: tel2
+    tag: 2.31.0
+agentInjector:
+  webhook:
+    objectSelector:
+      matchLabels:
+        devctl.io/shared-egress: "true"
+client:
+  usage:
+    enabled: false
+  intercept:
+    localShortcut: false
+intercept:
+  allowGlobalIntercepts: false
+
+# Upstream Helm lifecycle hooks also need internal registry mirrors.
+hooks:
+  busybox:
+    registry: registry.internal.example
+    image: devtools/busybox
+    tag: "1.36.1"
+  curl:
+    registry: registry.internal.example
+    image: devtools/curl
+    tag: "8.1.1"
+
+# Traffic Manager reporting is separate from client reporting.
+usage:
+  enabled: false
+  collectorAddress: ""
+nodeAgent:
+  enabled: false
+routeController:
+  enabled: false

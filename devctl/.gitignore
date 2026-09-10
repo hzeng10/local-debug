@@ -1,0 +1,4 @@
+/dist/
+/.state/
+*.local.json
+*.log

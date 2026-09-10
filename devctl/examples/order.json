@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "name": "order",
+  "cluster": {
+    "context": "internal-test",
+    "namespace": "business-test",
+    "domain": "cluster.local",
+    "sshHost": "dev-node"
+  },
+  "network": {
+    "backend": "telepresence",
+    "transport": "kubectl",
+    "managerNamespace": "platform-existing",
+    "gatewayNamespace": "platform-existing",
+    "gatewayDeployment": "dev-egress",
+    "authEnv": "DEVCTL_GATEWAY_AUTH",
+    "fingerprint": "REPLACE_WITH_ADMIN_PINNED_CHISEL_FINGERPRINT",
+    "routeCIDRs": ["10.96.0.0/12", "10.244.0.0/16"],
+    "bypassCIDRs": ["192.0.2.10/32"],
+    "clusterDNS": "10.96.0.10",
+    "fallbackDNS": "192.0.2.53",
+    "dnsSuffixes": []
+  },
+  "source": {
+    "deployment": "order",
+    "container": "order",
+    "envAllow": ["SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD"],
+    "requiredEnv": ["SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD"],
+    "overrides": {
+      "SERVER_ADDRESS": "127.0.0.1",
+      "SERVER_PORT": "8080",
+      "INVENTORY_BASE_URL": "http://inventory.${NAMESPACE}.svc.${CLUSTER_DOMAIN}:8080",
+      "SPRING_DATA_REDIS_HOST": "redis.middleware.svc.${CLUSTER_DOMAIN}",
+      "SPRING_CONFIG_ADDITIONAL_LOCATION": "file:${CONFIG_DIR}/application-cluster.yaml",
+      "SPRING_KAFKA_LISTENER_AUTO_STARTUP": "false",
+      "SPRING_RABBITMQ_LISTENER_SIMPLE_AUTO_STARTUP": "false",
+      "SPRING_RABBITMQ_LISTENER_DIRECT_AUTO_STARTUP": "false",
+      "SPRING_FLYWAY_ENABLED": "false",
+      "SPRING_LIQUIBASE_ENABLED": "false"
+    },
+    "files": [
+      {"kind": "configmap", "name": "order-config", "key": "application.yaml", "path": "application-cluster.yaml"}
+    ]
+  },
+  "application": {
+    "workDir": "C:/src/order",
+    "command": [".\\mvnw.cmd", "spring-boot:run", "-Dspring-boot.run.jvmArguments=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005"],
+    "healthURL": "http://127.0.0.1:8080/actuator/health",
+    "healthStatus": 200,
+    "startupSeconds": 180,
+    "backgroundTasksReviewed": false,
+    "tests": {"smoke": ["powershell.exe", "-NoProfile", "-File", "tests/smoke.ps1"]},
+    "testTimeoutSeconds": 300,
+    "inheritEnv": []
+  },
+  "dependencies": [
+    {"name": "inventory", "url": "http://inventory.business-test.svc.cluster.local:8080/actuator/health", "status": 200},
+    {"name": "redis", "address": "redis.middleware.svc.cluster.local:6379"}
+  ]
+}

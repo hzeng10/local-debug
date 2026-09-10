@@ -1,0 +1,21 @@
+{{- if .Values.businessAuthorization.enabled }}
+{{- if not .Values.businessAuthorization.selector }}{{ fail "businessAuthorization requires a nonempty workload selector" }}{{ end -}}
+{{- if not .Values.businessAuthorization.ports }}{{ fail "businessAuthorization requires explicit destination ports" }}{{ end -}}
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ .Values.name }}-development-access
+  namespace: {{ required "set businessAuthorization.namespace" .Values.businessAuthorization.namespace }}
+spec:
+  selector:
+    matchLabels: {{ toYaml .Values.businessAuthorization.selector | nindent 6 }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - {{ printf "%s/ns/%s/sa/%s" .Values.trustDomain .Release.Namespace .Values.name | quote }}
+      to:
+        - operation:
+            ports: {{ toJson .Values.businessAuthorization.ports }}
+{{- end }}

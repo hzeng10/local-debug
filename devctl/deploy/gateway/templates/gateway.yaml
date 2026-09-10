@@ -1,0 +1,77 @@
+{{- $name := .Values.name -}}
+{{- $image := required "set image to an offline registry digest" .Values.image -}}
+{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" $image) }}{{ fail "image must be pinned by sha256 digest" }}{{ end -}}
+{{- if not .Values.egress }}{{ fail "configure explicit egress destinations, including DNS TCP 53" }}{{ end -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels: {app: {{ $name }}}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        {{- if .Values.telepresence.enabled }}
+        devctl.io/shared-egress: "true"
+        {{- end }}
+        {{- if .Values.ambient }}
+        istio.io/dataplane-mode: ambient
+        {{- end }}
+      {{- if .Values.telepresence.enabled }}
+      annotations:
+        telepresence.io/inject-traffic-agent: enabled
+        telepresence.io/mount-policies: '{"credentials":"Ignore","/credentials":"Ignore"}'
+      {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: chisel
+          image: {{ $image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: [server, --host, "0.0.0.0", --port, "8080", --socks5, --authfile, /credentials/users.json, --keyfile, /credentials/key.pem]
+          ports: [{name: tunnel, containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: tunnel}, initialDelaySeconds: 2, periodSeconds: 5}
+          livenessProbe: {tcpSocket: {port: tunnel}, initialDelaySeconds: 10, periodSeconds: 10}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          volumeMounts: [{name: credentials, mountPath: /credentials, readOnly: true}]
+      volumes:
+        - name: credentials
+          secret: {secretName: {{ .Values.authSecret }}, defaultMode: 0440}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {matchLabels: {app: {{ $name }}}}
+  policyTypes: [Ingress, Egress]
+  # The developer connection uses Kubernetes port-forward, not an exposed Service.
+  # Kubelet/CNI port-forward and ambient interaction must be checked on the target cluster.
+  ingress: []
+  egress: {{ toYaml .Values.egress | nindent 4 }}

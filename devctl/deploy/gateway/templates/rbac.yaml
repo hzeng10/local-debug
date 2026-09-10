@@ -1,0 +1,67 @@
+{{- if .Values.developerGroups }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.name }}-connect
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [{{ .Values.name }}]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.name }}-connect
+  namespace: {{ .Release.Namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Values.name }}-connect}
+subjects:
+{{- range .Values.developerGroups }}
+  - {kind: Group, name: {{ . | quote }}, apiGroup: rbac.authorization.k8s.io}
+{{- end }}
+{{- if .Values.readAccess.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.name }}-config-reader
+  namespace: {{ .Values.readAccess.namespace }}
+rules:
+  {{- if .Values.readAccess.deployments }}
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: {{ toJson .Values.readAccess.deployments }}
+    verbs: [get]
+  {{- end }}
+  {{- if .Values.readAccess.configMaps }}
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: {{ toJson .Values.readAccess.configMaps }}
+    verbs: [get]
+  {{- end }}
+  {{- if .Values.readAccess.secrets }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: {{ toJson .Values.readAccess.secrets }}
+    verbs: [get]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.name }}-config-reader
+  namespace: {{ .Values.readAccess.namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Values.name }}-config-reader}
+subjects:
+{{- range .Values.developerGroups }}
+  - {kind: Group, name: {{ . | quote }}, apiGroup: rbac.authorization.k8s.io}
+{{- end }}
+{{- end }}
+{{- end }}
