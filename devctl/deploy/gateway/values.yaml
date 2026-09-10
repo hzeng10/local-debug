@@ -28,3 +28,7 @@ businessAuthorization:
   selector: {}
   ports: []
 trustDomain: cluster.local
+
+imagePullPolicy: IfNotPresent
+affinity: {}
+tolerations: []

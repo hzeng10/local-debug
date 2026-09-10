@@ -2,6 +2,7 @@ package devctl
 
 import (
 	"context"
+	"devctl.local/devctl/internal/provision"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 	"time"
 )
 
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 const usage = `devctl: Windows local JVM -> shared Kubernetes dependencies
 
@@ -30,6 +31,8 @@ Commands:
   status       Show network and local process status
   disconnect   Stop ALL managed applications and the shared network session
   validate     Validate a profile without contacting Kubernetes
+  bundle       Prepare/verify offline administrator bundles
+  admin        Discover/plan/apply/verify/export shared components
   version      Print the build version
 
 Options: --state-dir DIR --format text|json --suite NAME
@@ -38,6 +41,9 @@ No developer command creates namespaces, deploys workloads, or intercepts traffi
 `
 
 func Main(args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && (args[0] == "admin" || args[0] == "bundle") {
+		return provision.Main(args, out, errOut)
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
 		fmt.Fprint(out, usage)
 		return 0

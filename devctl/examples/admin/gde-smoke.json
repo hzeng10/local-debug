@@ -1,0 +1,6 @@
+{
+  "baseURL": "http://127.0.0.1:8080",
+  "healthPath": "/actuator/health",
+  "readOnlyPaths": [],
+  "timeoutSeconds": 20
+}

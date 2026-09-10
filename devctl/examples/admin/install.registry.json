@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "namespace": "kube-system",
+  "context": "internal-test",
+  "kubeconfig": "/root/.kube/config",
+  "kubectl": "",
+  "bundle": "../../.offline/bundle",
+  "workDir": "../../.admin-state",
+  "remoteDir": "/tmp/devctl-admin",
+  "ssh": {
+    "host": "admin-node",
+    "sudo": true
+  },
+  "imageMode": "registry",
+  "registry": {
+    "prefix": "harbor.internal.example/devctl",
+    "configFile": "",
+    "pullSecret": ""
+  },
+  "nodes": [
+    {
+      "name": "REPLACE_NODE_NAME",
+      "arch": "amd64",
+      "ssh": {
+        "host": "worker-1",
+        "sudo": true
+      },
+      "runtime": "auto",
+      "socket": "",
+      "ctr": "ctr"
+    }
+  ],
+  "backends": [
+    "telepresence",
+    "gateway"
+  ],
+  "managerRelease": "traffic-manager",
+  "gatewayRelease": "dev-egress",
+  "reuseManager": false,
+  "credentials": {
+    "mode": "generate",
+    "secret": "dev-egress-auth",
+    "users": [
+      "alice"
+    ]
+  },
+  "developerGroups": [
+    "internal-developers"
+  ],
+  "configMaps": [
+    "gde-adapter-config"
+  ],
+  "secrets": [
+    "gde-adapter-db",
+    "gde-adapter-redis",
+    "gde-adapter-minio"
+  ],
+  "businessDeployment": "gde-adapter",
+  "businessContainer": "gde-adapter",
+  "developerProfile": "../gde-adapter.json",
+  "domain": "cluster.local",
+  "clusterDNS": "10.96.0.10",
+  "routeCIDRs": [
+    "10.96.0.0/12",
+    "10.244.0.0/16"
+  ],
+  "bypassCIDRs": [
+    "192.0.2.10/32"
+  ],
+  "fallbackDNS": "192.0.2.53",
+  "dependencies": [
+    {
+      "name": "gaussdb",
+      "namespace": "kube-system",
+      "service": "gaussdb",
+      "port": 5432
+    },
+    {
+      "name": "redis",
+      "namespace": "kube-system",
+      "service": "redis",
+      "port": 6379
+    },
+    {
+      "name": "minio",
+      "namespace": "kube-system",
+      "service": "minio",
+      "port": 9000
+    }
+  ],
+  "extraEgress": [],
+  "tolerations": [],
+  "istioNamespace": "istio-system",
+  "cniDaemonSet": "istio-cni-node",
+  "cniConfigMap": "istio-cni-config",
+  "timeoutSeconds": 300,
+  "developerSSHHost": "developer-node",
+  "developerContext": "internal-test"
+}

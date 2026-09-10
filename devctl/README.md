@@ -1,6 +1,6 @@
 # devctl：Windows 本地 JVM 连接共享 Kubernetes
 
-独立 Go 模块，**不依赖原目录的 ldbg 实现**。标准库实现 CLI、本地管理进程、配置解析、健康检查及测试编排；不需要安装 Python、Node.js、Docker 或 WSL。Go 只用于构建，开发者使用编译后的 EXE。
+独立 Go 模块，**不依赖原目录的 ldbg 实现**。Go 实现 CLI、本地管理进程、配置解析、健康检查及测试编排；不需要安装 Python、Node.js、Docker 或 WSL。Go 只用于构建，开发者使用编译后的 EXE。
 
 ```text
 本地浏览器 / Postman → http://127.0.0.1:8080 → 本地 JVM
@@ -14,7 +14,7 @@
 
 ## 构建与验证
 
-Go 1.22 或更高版本，无 Go 第三方依赖，构建可禁用网络：
+Go 1.22 或更高版本；管理员模块使用固定版本 YAML 解析库，源码和许可证已放入 vendor，构建可禁用网络：
 
 ```bash
 cd devctl
@@ -23,11 +23,19 @@ go vet ./...
 make build
 ```
 
-Windows 使用 `scripts/build.ps1`。`make build` 生成 Windows amd64、Windows arm64、Linux amd64 和 SHA256SUMS。示例、部署模板与文档应随 EXE 一起交付。
+Windows 使用 `scripts/build.ps1` 构建，再运行 `scripts/package.ps1` 生成包含四个平台二进制、配置和脚本的管理员交付包 `dist/devctl-admin-kit.zip`。`make build` 生成 Windows amd64、Windows arm64、Linux amd64/arm64 和 SHA256SUMS。示例、部署模板与文档应随 EXE 一起交付。
 
 可选设置 `DEVCTL_HELM_VALIDATOR`、`DEVCTL_SINGBOX_VALIDATOR` 为离线验证器的绝对路径，测试会校验 Chart 渲染和 sing-box 实际配置解析；不会创建 TUN 或访问集群。
 
 `test/integration_test.go` 使用 Go 编译的假 kubectl、Telepresence 和 HTTP 应用，验证真实 CLI/后台进程/配置注入/测试/退出流程。它**不证明 Windows TUN 或真实 Istio 兼容性**；现场执行 [验收流程](docs/acceptance.md)。
+
+## 管理员离线部署
+
+新增 `bundle prepare/verify`、`admin discover/plan/apply/verify/export/remote`。Windows 无 Docker 准备固定版本工具和镜像归档，使用 JSON 配置经 SSH 上传到 Linux 节点，部署到已有 kube-system。
+
+参见 [完整离线部署](docs/admin.md)、[管理员 JSON 字段](docs/admin-config.md)、[gde-adapter 本地调测](docs/gde-adapter.md)。入口为 scripts/prepare-offline.ps1、deploy-remote.ps1 和 deploy-offline.sh。示例配置位于 examples/admin；示例地址和资源名必须改为实际值。
+
+CI/本地测试可额外设置 `DEVCTL_TP_CHART` 指向官方 Telepresence 2.31.0 Chart；测试会检查真实 Chart 的 schema、镜像、离线 hook 和调度边界。SSH/集群状态使用测试替身，实机验收仍须在现场执行。
 
 ## 开发者快速开始
 
@@ -102,6 +110,6 @@ sing-box 自身管理 TUN 路由和接口 DNS，devctl 不写 hosts、不修改�
 
 ## 已实现与现场前提
 
-已实现 CLI、两种网络后端编排、SSH 远端读取、环境和配置文件快照、受控本地进程树、健康检查、命令测试、结构化报告、离线构建及管理员 Chart。
+已实现管理员离线物料和 SSH 部署、CLI、两种网络后端编排、SSH 远端读取、环境和配置文件快照、受控本地进程树、健康检查、命令测试、结构化报告、离线构建及管理员 Chart。
 
 尚未在本交付环境验证：真实 Windows 11 TUN/企业 VPN 组合、真实 Telepresence 服务、你们的 Istio 1.28.3/CNI 策略、真实 GaussDB/Kafka/Redis 等协议。没有提供集群访问参数，因此未部署共享组件，也未连接或变更现有集群。上线前需通过现场验收。

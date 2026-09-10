@@ -1,6 +1,6 @@
 {{- $name := .Values.name -}}
 {{- $image := required "set image to an offline registry digest" .Values.image -}}
-{{- if not (regexMatch "@sha256:[a-f0-9]{64}$" $image) }}{{ fail "image must be pinned by sha256 digest" }}{{ end -}}
+{{- if not (or (regexMatch "@sha256:[a-f0-9]{64}$" $image) (and (eq .Values.imagePullPolicy "Never") (regexMatch "^devctl[.]local/chisel:[a-f0-9]{16}-(amd64|arm64)$" $image))) }}{{ fail "image must be pinned by sha256 digest" }}{{ end -}}
 {{- if not .Values.egress }}{{ fail "configure explicit egress destinations, including DNS TCP 53" }}{{ end -}}
 apiVersion: v1
 kind: ServiceAccount
@@ -39,6 +39,12 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -48,7 +54,7 @@ spec:
       containers:
         - name: chisel
           image: {{ $image | quote }}
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           args: [server, --host, "0.0.0.0", --port, "8080", --socks5, --authfile, /credentials/users.json, --keyfile, /credentials/key.pem]
           ports: [{name: tunnel, containerPort: 8080}]
           readinessProbe: {tcpSocket: {port: tunnel}, initialDelaySeconds: 2, periodSeconds: 5}

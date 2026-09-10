@@ -2,3 +2,10 @@
 /.state/
 *.local.json
 *.log
+
+/vendor-cache/
+
+.offline/
+.admin-state/
+*.credentials.json
+*.private.json
