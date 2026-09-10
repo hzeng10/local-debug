@@ -12,6 +12,8 @@
 
 ## 2. 对齐服务配置
 
+逐项查询命令、必填条件和精简配置见 [gde-adapter 配置项获取指南](gde-adapter-config.md)。
+
 模板为 `examples/gde-adapter.json`，安装后会导出填好网络参数的版本。需确认：
 
 | 配置 | 来源与检查 |

@@ -33,7 +33,7 @@ Windows 使用 `scripts/build.ps1` 构建，再运行 `scripts/package.ps1` 生�
 
 新增 `bundle prepare/verify`、`admin discover/plan/apply/verify/export/remote`。Windows 无 Docker 准备固定版本工具和镜像归档，使用 JSON 配置经 SSH 上传到 Linux 节点，部署到已有 kube-system。
 
-参见 [完整离线部署](docs/admin.md)、[管理员 JSON 字段](docs/admin-config.md)、[gde-adapter 本地调测](docs/gde-adapter.md)。入口为 scripts/prepare-offline.ps1、deploy-remote.ps1 和 deploy-offline.sh。示例配置位于 examples/admin；示例地址和资源名必须改为实际值。
+参见 [完整离线部署](docs/admin.md)、[管理员 JSON 字段](docs/admin-config.md)、[gde-adapter 本地调测](docs/gde-adapter.md)、[配置项获取与精简指南](docs/gde-adapter-config.md)。入口为 scripts/prepare-offline.ps1、deploy-remote.ps1 和 deploy-offline.sh。示例配置位于 examples/admin；示例地址和资源名必须改为实际值。
 
 CI/本地测试可额外设置 `DEVCTL_TP_CHART` 指向官方 Telepresence 2.31.0 Chart；测试会检查真实 Chart 的 schema、镜像、离线 hook 和调度边界。SSH/集群状态使用测试替身，实机验收仍须在现场执行。
 
